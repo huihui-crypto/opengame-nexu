@@ -12408,13 +12408,13 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-width: 180px;
-  height: 46px;
+  min-width: 168px;
+  height: 42px;
   padding: 0 18px;
   border-radius: inherit;
   background: transparent;
   color: var(--motion-muted);
-  font-size: var(--motion-text-heading);
+  font-size: var(--motion-text-body);
   font-weight: var(--motion-weight-semibold);
   transition: color 240ms var(--motion-ease-out);
 }
@@ -12428,7 +12428,7 @@
 
 /* Large headline with a light sweep across the letters. */
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 {
-  font-size: clamp(32px, 3.8vw, 58px);
+  font-size: clamp(28px, 3.1vw, 48px);
   white-space: nowrap;
   font-weight: var(--motion-weight-bold);
   letter-spacing: -0.035em;
