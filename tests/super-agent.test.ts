@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { designHttp, designProjectsFor } from '../design-projects.ts';
-import { gameHttp, gameProjectsFor } from '../game-projects.ts';
+import { GameProjects, gameHttp, gameProjectsFor } from '../game-projects.ts';
 import { injectPreviewBridgeHtml, isValidPreviewBridgeToken } from '../shared/preview-bridge.ts';
 import { Phase1Service } from '../phase1.ts';
 import { AssetLibrary } from '../gateway/asset-library.ts';
@@ -1304,7 +1304,32 @@ test('game generation suppresses premature starter-kit artifacts during building
 }));
 
 test('built-in template zero-rebuild delivery presents game artifact immediately and preserves localized title across concurrent set_status', () => fixture(async store => {
-  const games = gameProjectsFor(store.directory);
+  const fixtureTemplates = path.join(store.directory, 'fixture-templates');
+  const templateDir = path.join(fixtureTemplates, 'ball-match');
+  await mkdir(templateDir, { recursive: true });
+  await writeFile(path.join(templateDir, 'index.html'), '<!doctype html><title>Jelly Ball Chain Pop</title>');
+  await writeFile(path.join(templateDir, 'cover.webp'), 'fake-webp');
+  await writeFile(path.join(templateDir, 'game.json'), JSON.stringify({
+    id: 'ball-match',
+    title: 'Jelly Ball Chain Pop',
+    description: 'Trace glossy chains across a 3D bubble grid.',
+    genre: 'casual',
+    style: '3d',
+    setting: 'modern',
+    multiplayer: false,
+    maxPlayers: 1,
+    status: 'published',
+    cover: 'cover.webp',
+    entry: 'index.html',
+    controls: 'Drag through adjacent balls.',
+    plays: 0,
+    likes: 0,
+    dislikes: 0,
+    createdAt: '2026-11-24T00:00:00.000Z',
+    updatedAt: '2026-11-24T00:00:00.000Z',
+    orientation: 'portrait',
+  }));
+  const games = new GameProjects(store.directory, fixtureTemplates);
   const remixed = await games.remix('ball-match');
   assert.equal(remixed.game.title, 'Jelly Ball Chain Pop');
   assert.equal(remixed.game.status, 'draft');
@@ -4014,4 +4039,243 @@ test('SuperAgentConversations.recordFeedback persists per-turn ratings/reasons, 
   assert.doesNotMatch(JSON.stringify(feedbackEvents), /Secret local feedback text|Tap delay on mobile/);
   await service.close();
   tracking.close();
+}));
+
+test('Super Agent ignores read-only openmotion_game_get on unrelated ready games and promotes building games to ready on present and clean turn end', () => fixture(async store => {
+  const games = gameProjectsFor(store.directory);
+  const createdTarget = await games.create({
+    prompt: 'Rainy temple 3D boss duel',
+    genre: 'casual',
+    orientation: 'landscape',
+    multiplayer: false,
+  });
+  const targetId = createdTarget.game.id;
+
+  const createdRef = await games.create({
+    prompt: 'Reference 3D archer template',
+    genre: 'shooter',
+    orientation: 'portrait',
+    multiplayer: false,
+  });
+  const refId = createdRef.game.id;
+  await games.status(refId, 'ready');
+
+  const phase1 = new Phase1Service(store, pluginRoot, {
+    origin: () => 'http://127.0.0.1:4173',
+    nativeUrl: () => undefined,
+    openProject: async () => {},
+    mutation: async fn => fn(),
+    cancel: async () => ({ id: 'x', state: 'cancelled' } as any),
+  });
+
+  class GameLeakAndStatusRpc {
+    onNotification: (msg: any) => void;
+    closed = false;
+
+    constructor(_bin: string, _cwd: string, onNotification: (msg: any) => void, _onError: (err: Error) => void) {
+      this.onNotification = onNotification;
+    }
+
+    private static turnCount = 0;
+
+    async request(method: string) {
+      if (method === 'initialize') return {};
+      if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'thread-game-leak-1' } };
+      if (method === 'turn/start') {
+        GameLeakAndStatusRpc.turnCount += 1;
+        if (GameLeakAndStatusRpc.turnCount === 1) {
+          queueMicrotask(() => {
+            this.onNotification({
+              id: 301,
+              method: 'item/tool/call',
+              params: {
+                callId: 'gl-1',
+                tool: 'openmotion_game_set_status',
+                arguments: { id: targetId, status: 'building' },
+              },
+            });
+          });
+          return { turn: { id: 'turn-game-leak-1' } };
+        }
+        // Turn 2: strictly read-only inspection of the target game while it is in `building`.
+        queueMicrotask(() => {
+          this.onNotification({
+            id: 401,
+            method: 'item/tool/call',
+            params: {
+              callId: 'gl-ro-1',
+              tool: 'openmotion_game_get',
+              arguments: { id: targetId },
+            },
+          });
+        });
+        return { turn: { id: 'turn-game-leak-2' } };
+      }
+      return {};
+    }
+
+    send(payload: any) {
+      if (payload.id === 301) {
+        // Agent inspects an unrelated ready game as reference via openmotion_game_get.
+        queueMicrotask(() => {
+          this.onNotification({
+            id: 302,
+            method: 'item/tool/call',
+            params: {
+              callId: 'gl-2',
+              tool: 'openmotion_game_get',
+              arguments: { id: refId },
+            },
+          });
+        });
+      }
+      if (payload.id === 302) {
+        queueMicrotask(() => {
+          this.onNotification({
+            id: 303,
+            method: 'item/tool/call',
+            params: {
+              callId: 'gl-3',
+              tool: 'openmotion_game_write_files',
+              arguments: {
+                id: targetId,
+                files: [
+                  { path: 'index.html', content: '<!doctype html><canvas id="c"></canvas><script src="./client.js"></script>' },
+                  { path: 'client.js', content: 'window.__RAIN_TEMPLE__ = true;' },
+                ],
+              },
+            },
+          });
+        });
+      }
+      if (payload.id === 303) {
+        // Agent presents the game without calling set_status("ready") first.
+        queueMicrotask(() => {
+          this.onNotification({
+            id: 304,
+            method: 'item/tool/call',
+            params: {
+              callId: 'gl-4',
+              tool: 'openmotion_present_artifact',
+              arguments: { kind: 'game-project', projectId: targetId, title: 'Rain Temple · Play' },
+            },
+          });
+        });
+      }
+      if (payload.id === 304) {
+        // Late doc write demotes status back to building; agent forgets to call set_status("ready") before completing turn.
+        queueMicrotask(() => {
+          this.onNotification({
+            id: 305,
+            method: 'item/tool/call',
+            params: {
+              callId: 'gl-5',
+              tool: 'openmotion_game_write_files',
+              arguments: {
+                id: targetId,
+                files: [
+                  { path: 'design/verification.md', content: '# Verified\nPassed playtest.' },
+                ],
+              },
+            },
+          });
+        });
+      }
+      if (payload.id === 305) {
+        queueMicrotask(() => {
+          this.onNotification({
+            method: 'item/completed',
+            params: { item: { id: 'msg-gl-1', type: 'agentMessage', text: 'Rain Temple is ready to play.' } },
+          });
+          this.onNotification({
+            method: 'turn/completed',
+            params: { turn: { id: 'turn-game-leak-1', status: 'completed' } },
+          });
+        });
+      }
+      if (payload.id === 401) {
+        queueMicrotask(() => {
+          this.onNotification({
+            method: 'item/completed',
+            params: { item: { id: 'msg-gl-2', type: 'agentMessage', text: 'Checked current game metadata.' } },
+          });
+          this.onNotification({
+            method: 'turn/completed',
+            params: { turn: { id: 'turn-game-leak-2', status: 'completed' } },
+          });
+        });
+      }
+    }
+
+    close() {
+      this.closed = true;
+    }
+  }
+
+  const service = new SuperAgentConversations(store, {
+    resolve: async () => '/usr/local/bin/codex',
+    rpc: GameLeakAndStatusRpc as unknown as typeof AssetAgentRpc,
+  });
+
+  try {
+    const chat = await service.create({
+      engine: 'codex',
+      intent: 'game',
+      permissionMode: 'auto',
+    });
+
+    await service.start(chat.id, {
+      requestId: 'req-game-leak-1',
+      mode: 'game',
+      text: 'Build Rain Temple 3D boss fight',
+      attachments: [{ kind: 'game-project', id: targetId, title: createdTarget.game.title }],
+    }, {
+      origin: 'http://127.0.0.1:4173',
+      phase1: () => phase1,
+    });
+
+    for (let i = 0; i < 100; i++) {
+      const snap = await service.get(chat.id);
+      if (snap.state === 'idle' || snap.state === 'failed') break;
+      await new Promise(resolve => setTimeout(resolve, 15));
+    }
+
+    const done = await service.get(chat.id);
+    assert.equal(done.state, 'idle');
+    // Unrelated ready game inspected via openmotion_game_get must NOT appear in chat deliverables.
+    assert.equal(done.artifacts.some(item => item.projectId === refId || item.id === `game:${refId}`), false);
+    const targetArtifact = done.artifacts.find(item => item.projectId === targetId);
+    assert.ok(targetArtifact);
+    // Target game must be promoted out of building -> ready when the turn finishes cleanly, preserving custom title.
+    const finalGame = await games.get(targetId);
+    assert.equal(finalGame.status, 'ready');
+    assert.equal(targetArtifact.revision, finalGame.updatedAt);
+    assert.equal(targetArtifact.title, 'Rain Temple · Play');
+
+    // A subsequent read-only turn on a `building` game must neither promote it to ready nor re-present/overwrite its title.
+    await games.status(targetId, 'building');
+    const prevPresentedAt = targetArtifact.presentedAt;
+    await service.start(chat.id, {
+      requestId: 'req-game-leak-2',
+      mode: 'game',
+      text: 'Inspect current build status',
+    }, {
+      origin: 'http://127.0.0.1:4173',
+      phase1: () => phase1,
+    });
+    for (let i = 0; i < 100; i++) {
+      const snap = await service.get(chat.id);
+      if (snap.state === 'idle' || snap.state === 'failed') break;
+      await new Promise(resolve => setTimeout(resolve, 15));
+    }
+    const afterReadOnly = await service.get(chat.id);
+    assert.equal(afterReadOnly.state, 'idle');
+    assert.equal((await games.get(targetId)).status, 'building');
+    const afterArtifact = afterReadOnly.artifacts.find(item => item.projectId === targetId);
+    assert.ok(afterArtifact);
+    assert.equal(afterArtifact.title, 'Rain Temple · Play');
+    assert.equal(afterArtifact.presentedAt, prevPresentedAt);
+  } finally {
+    await service.close();
+  }
 }));

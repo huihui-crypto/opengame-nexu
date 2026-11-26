@@ -11,6 +11,7 @@
     "studio:dev": "vite --config studio/vite.dev.config.ts",
     "mcp": "node --experimental-strip-types mcp.ts",
     "start": "node --experimental-strip-types preview.ts",
+    "update": "node --experimental-strip-types scripts/update.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "check": "node --experimental-strip-types scripts/check.ts",
     "package:plugin": "node --experimental-strip-types scripts/package.ts",

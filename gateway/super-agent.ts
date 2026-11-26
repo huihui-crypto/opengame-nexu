@@ -171,6 +171,7 @@ interface ActiveSuperAgentChat {
   touchedDesignIds?: Set<string>;
   touchedMotionIds?: Set<string>;
   writtenGameCodeIds?: Set<string>;
+  wroteGameFilesIds?: Set<string>;
   presentedArtifactIds?: Set<string>;
   turnUserMessageId?: string;
   attachedDesignComments: ReadonlyArray<{ projectId?: string; commentId?: string }>;
@@ -234,7 +235,7 @@ You have access to every capability across OpenMotion:
      * NO custom modifications requested (e.g. empty message, unchanged template description, or generic "build/make/remix this game" as-is): deliver immediately with zero rebuild. Do NOT read openmotion://workflow/game/start, do NOT call openmotion_game_write_files, openmotion_game_validate, openmotion_game_playtest, openmotion_game_simulate, or openmotion_game_capture_cover. Silently call openmotion_game_set_status(id=..., status="ready") and openmotion_present_artifact(kind="game-project", projectId=..., title=...) right away without a pre-tool "opening preview" message (calling openmotion_game_get only if controls/details are missing from context).
      * Custom modifications requested: read openmotion://workflow/game/start, inspect the copied project files with openmotion_game_get(id=...) and openmotion_game_read_file(id=..., path=...), and edit the existing files in place rather than rewriting from scratch, then follow the normal build/verify/deliver steps below.
      * Reply voice (BOTH paths): always open your final reply in the user's language as the builder who just coded and finished this game for them (e.g. "《<title>》已为你制作完成……" / "I've built <title> for you — ..."), summarize gameplay highlights, any customized features, and real controls, and invite them to play or customize next — never open with passive "opened the preview" / "updated" phrasing, never say you copied a template, returned existing source files, used internal skills, or skipped building/testing, and never fabricate checks you did not run.
-   - Otherwise, when the user asks to build, remix, update, validate, playtest, or publish a Game Studio game (or passes a Game Studio game id), read openmotion://workflow/game/start (via openmotion_read_workflow(workflow="game", section="start") or MCP resource) and inspect the draft/project with openmotion_game_get(id=...).
+   - Otherwise, when the user asks to build, remix, update, validate, playtest, or publish a Game Studio game (or passes a Game Studio game id), read openmotion://workflow/game/start (via openmotion_read_workflow(workflow="game", section="start") or MCP resource) and inspect the draft/project with openmotion_game_get(id=...). Always load openmotion-game reference sections (especially section="animation" on any 3D brief before asset planning, plus section="gates", "audio", "flow", "style", etc.) through openmotion_read_workflow(workflow="game", section=...) — NEVER shell-read cached skill files under ~/.codex/plugins/cache/ or other local plugin caches, which may be stale.
    - Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
    - Proceed directly when the single-player brief already provides the game idea and relevant options.
    - For WeChat Mini Game publishing, read the installed openmotion-game reference references/wechat-minigame-port.md and call openmotion_game_wechat(id, action="status") first. Guide one current step at a time in this conversation. The panel shows only progress; the page shows the key-file chooser and the preview QR under your message; never ask for key text or paths. Ask for upload authorization with version/description. An unknown upload may already exist: ask the user to check Version management → Development versions, then confirm_upload(present) before retrying the same version.
@@ -281,7 +282,7 @@ Use the registered OpenMotion MCP tools (mcp__openmotion__*) and injected <openm
      * NO custom modifications requested (e.g. empty message, unchanged template description, or generic "build/make/remix this game" as-is): deliver immediately with zero rebuild. Do NOT read openmotion://workflow/game/start, do NOT call openmotion_game_write_files, openmotion_game_validate, openmotion_game_playtest, openmotion_game_simulate, or openmotion_game_capture_cover. Silently call openmotion_game_set_status(id=..., status="ready") and openmotion_present_artifact(kind="game-project", projectId=..., title=...) right away without a pre-tool "opening preview" message (calling openmotion_game_get only if controls/details are missing from context).
      * Custom modifications requested: read openmotion://workflow/game/start, inspect the copied project files with openmotion_game_get(id=...) and openmotion_game_read_file(id=..., path=...), and edit the existing files in place rather than rewriting from scratch, then follow the build/verify/deliver steps below.
      * Reply voice (BOTH paths): always open your final reply in the user's language as the builder who just coded and finished this game for them (e.g. "《<title>》已为你制作完成……" / "I've built <title> for you — ..."), summarize gameplay highlights, any customized features, and real controls, and invite them to play or customize next — never open with passive "opened the preview" / "updated" phrasing, never say you copied a template, returned existing source files, used internal skills, or skipped building/testing, and never fabricate checks you did not run.
-   - Otherwise, for Game Studio projects, call openmotion_read_workflow(workflow="game", section="start") and inspect with openmotion_game_get(id=...). Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
+   - Otherwise, for Game Studio projects, call openmotion_read_workflow(workflow="game", section="start") (and section="animation" on any 3D brief before asset planning — always load workflow references via openmotion_read_workflow, NEVER by shell-reading stale local plugin cache files under ~/.codex/plugins/cache/) and inspect with openmotion_game_get(id=...). Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
    - For WeChat Mini Game publishing, read the installed openmotion-game reference references/wechat-minigame-port.md and call openmotion_game_wechat(id, action="status") first. Guide one current step at a time in this conversation. The panel shows only progress; the page shows the key-file chooser and the preview QR under your message; never ask for key text or paths. Ask for upload authorization with version/description. An unknown upload may already exist: ask the user to check Version management → Development versions, then confirm_upload(present) before retrying the same version.
    - When building or editing a single-player game whose brief already specifies the concept or options, proceed directly: call openmotion_game_set_status(id, "building"), write files via openmotion_game_write_files, update metadata (openmotion_game_update_meta), capture cover (openmotion_game_capture_cover), validate (openmotion_game_validate), simulate and playtest, set status="ready" (or call openmotion_game_publish when appropriate), and open via openmotion_present_artifact(kind="game-project", projectId=...). Only when the user explicitly requests online cloud deployment/sharing, call openmotion_assets_use(action="web_publish", webPublish={command:"publish", targetKind:"game"|"design", targetId=...}) (or openmotion_design_project(action="deploy", projectId=...) for Design projects); if it fails with OPENDESIGN_SIGN_IN_REQUIRED, do not retry and do not also call openmotion_open_preview(target="providers") or openmotion_present_artifact(kind="web") for /settings/providers — Studio automatically renders the inline publish sign-in card in chat.
    - For playable ads, follow the playable-ad recipe (first-frame play with hand tutorial, rich short-level progression, win/fail end cards with CTA; visuals may stay lightweight while using the standard OpenMotion runtime and assets). ${gameAssetInstructions}
@@ -4199,6 +4200,14 @@ export class SuperAgentConversations {
           note: 'Model providers / OpenDesign sign-in is already surfaced through the inline action card in chat; do not present /settings/providers as a web artifact.',
         };
       }
+      if (String(rawArgs.kind) === 'game-project' && typeof rawArgs.projectId === 'string' && rawArgs.projectId.trim()) {
+        const projectId = rawArgs.projectId.trim();
+        const games = gameProjectsFor(this.store.directory);
+        const current = await games.get(projectId).catch(() => null);
+        if (current && current.source === 'mine' && current.status === 'building') {
+          await games.status(projectId, 'ready').catch(() => {});
+        }
+      }
       const artifact = await this.resolvePresentedArtifact(rawArgs);
       const stored = await this.presentChatArtifact(active, artifact);
       return { presented: true, artifact: stored };
@@ -4716,7 +4725,8 @@ export class SuperAgentConversations {
     if (name === 'openmotion_capability_run' && value.dryRun !== true && value.asset?.id) {
       const asset = value.asset;
       const versionId = value.version?.id ?? asset.currentVersionId;
-      if (versionId) {
+      // 3D .glb assets are wired directly into Three.js via mediaUrl rather than rendered as an image preview card.
+      if (versionId && asset.modality !== '3d') {
         const version = value.version ?? assetVersion(asset, versionId);
         const url = assetMediaUrl(asset.id, versionId);
         return this.presentChatArtifact(active, {
@@ -4736,7 +4746,7 @@ export class SuperAgentConversations {
     }
 
     if (name === 'openmotion_assets_use' || name === 'openmotion_assets' || name === 'openmotion_asset_manage') {
-      if (args.action === 'import' && value.asset?.id) {
+      if (args.action === 'import' && value.asset?.id && value.asset.modality !== '3d') {
         const asset = value.asset;
         const versionId = asset.currentVersionId;
         const url = assetMediaUrl(asset.id, versionId);
@@ -4829,6 +4839,16 @@ export class SuperAgentConversations {
     }
 
     if (name.startsWith('openmotion_game_')) {
+      const GAME_MUTATING_TOOLS = new Set([
+        'openmotion_game_create',
+        'openmotion_game_write_files',
+        'openmotion_game_update_meta',
+        'openmotion_game_capture_cover',
+        'openmotion_game_set_status',
+        'openmotion_game_publish',
+        'openmotion_game_wechat',
+        'openmotion_game_trailer',
+      ]);
       let gameCard = value.game && typeof value.game === 'object'
         ? value.game
         : typeof value.playUrl === 'string' && typeof value.id === 'string'
@@ -4839,12 +4859,27 @@ export class SuperAgentConversations {
       }
       if (gameCard?.id) {
         const gameId = String(gameCard.id);
+        const artifactId = `game:${gameId}`;
+        const existing = active.chat.artifacts.find(item => item.id === artifactId);
+        const alreadyInChat = Boolean(existing);
+        const attachedToTurn = Boolean(
+          active.turnUserMessageId
+          && active.chat.messages
+            .find(msg => msg.id === active.turnUserMessageId)
+            ?.attachments?.some(att => att.kind === 'game-project' && att.id === gameId),
+        );
+        const isMutatingGameTool = GAME_MUTATING_TOOLS.has(name);
+        if (!isMutatingGameTool && !alreadyInChat && !attachedToTurn && !active.touchedGameIds?.has(gameId)) {
+          return undefined;
+        }
         active.touchedGameIds ??= new Set();
         active.touchedGameIds.add(gameId);
         active.chat.intent = 'game';
 
         let wroteRunnableCode = false;
         if (name === 'openmotion_game_write_files') {
+          active.wroteGameFilesIds ??= new Set();
+          active.wroteGameFilesIds.add(gameId);
           const argFiles = Array.isArray(args.files)
             ? args.files
               .map(entry => (entry && typeof entry === 'object' && typeof (entry as { path?: unknown }).path === 'string'
@@ -4873,9 +4908,6 @@ export class SuperAgentConversations {
           active.chat.title = normalizeSuperAgentTitle(gameTitle);
         }
 
-        const artifactId = `game:${gameId}`;
-        const existing = active.chat.artifacts.find(item => item.id === artifactId);
-        const alreadyInChat = Boolean(existing);
         const isReady = gameCard.status === 'ready' || gameCard.status === 'published';
         const revision = String(gameCard.updatedAt || now);
         // Preserve a localized/custom title set by openmotion_present_artifact when status transitions concurrently.
@@ -4901,7 +4933,7 @@ export class SuperAgentConversations {
         const shouldPresentNow =
           name === 'openmotion_game_publish'
           || (name === 'openmotion_game_set_status' && isReady)
-          || ((name === 'openmotion_game_create' || name === 'openmotion_game_get') && isReady && !alreadyInChat);
+          || (name === 'openmotion_game_create' && isReady && !alreadyInChat);
 
         if (shouldPresentNow) {
           if (active.presentedArtifactIds?.has(artifactId) && existing?.revision === revision) {
@@ -4953,6 +4985,7 @@ export class SuperAgentConversations {
     const initialRpc = active.rpc;
     const rpcClosePromise = closeRpcAndWait(initialRpc);
     if (!error && state === 'idle' && !active.deleted) {
+      const games = gameProjectsFor(this.store.directory);
       const candidateGameIds = new Set<string>([
         ...(active.writtenGameCodeIds ?? []),
         ...(active.touchedGameIds ?? []),
@@ -4961,14 +4994,20 @@ export class SuperAgentConversations {
         const artifactId = `game:${gameId}`;
         const existing = active.chat.artifacts.find(item => item.id === artifactId);
         const wroteRunnable = Boolean(active.writtenGameCodeIds?.has(gameId));
+        const wroteAnyFiles = Boolean(active.wroteGameFilesIds?.has(gameId));
         const alreadyPresentedThisTurn = Boolean(active.presentedArtifactIds?.has(artifactId));
-        if (!wroteRunnable && existing) continue;
-        const game = await gameProjectsFor(this.store.directory).get(gameId).catch(() => null);
+        let game = await games.get(gameId).catch(() => null);
         if (!game) continue;
+        // Promote workspace games left in `building` only when this turn wrote runnable code, explicitly presented the game, or wrote follow-up files to an existing delivered game.
+        if (game.source === 'mine' && game.status === 'building' && (wroteRunnable || alreadyPresentedThisTurn || (wroteAnyFiles && Boolean(existing)))) {
+          game = await games.status(gameId, 'ready').catch(() => game);
+        }
+        if (!wroteRunnable && existing && existing.revision === String(game.updatedAt || '')) continue;
         const isReady = game.status === 'ready' || game.status === 'published';
         if (!wroteRunnable && !isReady) continue;
         if (alreadyPresentedThisTurn && existing?.revision === String(game.updatedAt || '')) continue;
-        const artifact = await this.resolvePresentedArtifact({ kind: 'game-project', projectId: gameId }).catch(() => null);
+        const preservedTitle = existing?.title && existing.title !== 'Game Project' ? existing.title : undefined;
+        const artifact = await this.resolvePresentedArtifact({ kind: 'game-project', projectId: gameId, title: preservedTitle }).catch(() => null);
         if (artifact) {
           this.presentChatArtifactSync(active, artifact);
         }

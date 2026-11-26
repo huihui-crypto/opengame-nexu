@@ -61,6 +61,7 @@ import { createAppTracking, closeTracking, saveTrackingPreference, trackingPrefe
 import { flushCodexSessionTracking, syncActiveCodexThreads } from './shared/codex-session-tracking.ts';
 import { studioEvents } from './tracking/events.ts';
 import { configureNativeEnvironment, nativeRuntimeStatus, startNativePreparation, requireNativeRuntime } from './scripts/npm-runtime.mjs';
+import { applySourceUpdate, checkSourceUpdate } from './shared/source-update.ts';
 import { nativeRouteCapability } from './shared/native-runtime.ts';
 import { validPending, uuid } from './tracking/core.ts';
 import { validHostContext, unknownHost, previewTrackingContext } from './tracking/host.ts';
@@ -322,6 +323,14 @@ async function invokePhase1WithTracking(
     result = previewTrackingContext(result, originUrl, token);
   }
   return result;
+}
+
+// Legacy callers can send an empty POST. The gateway validates both optional attribution fields.
+async function accountAttribution(req: IncomingMessage) {
+  if (!req.headers['content-type']?.startsWith('application/json')
+    || (!req.headers['transfer-encoding'] && !Number(req.headers['content-length']))) return {};
+  const body = await input(req, 4096);
+  return { hookId: body?.hookId, entryId: body?.entryId };
 }
 
 function revision(value: unknown): asserts value is string {
@@ -1170,6 +1179,23 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       }
       return json(res, 200, await nativeRuntimeStatus(root));
     }
+    if (motionRequest && url.pathname === '/api/update/status' && req.method === 'GET') {
+      if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'UPDATE_SCOPE_REJECTED' });
+      const root = context.nativeRoot ?? pluginRoot;
+      const directory = (store.workspaceStore ?? store).directory;
+      const force = url.searchParams.get('force') === '1' || url.searchParams.get('force') === 'true';
+      return json(res, 200, await checkSourceUpdate({ repoRoot: root, dataDirectory: directory, force, automatic: false }));
+    }
+    if (motionRequest && url.pathname === '/api/update/apply' && req.method === 'POST') {
+      if (req.headers['sec-fetch-site'] === 'cross-site') return json(res, 403, { error: 'UPDATE_SCOPE_REJECTED' });
+      const root = context.nativeRoot ?? pluginRoot;
+      const directory = (store.workspaceStore ?? store).directory;
+      const outcome = await applySourceUpdate({ repoRoot: root, dataDirectory: directory, automatic: false, restartBackend: false });
+      return json(res, ['failed', 'failed_rolled_back'].includes(outcome.status) ? 500 : 200, {
+        ...outcome,
+        restartRequired: outcome.updated,
+      });
+    }
     if (motionRequest && url.pathname === '/api/tracking/preferences' && ['GET', 'PUT'].includes(req.method!)) {
       const directory = (store.workspaceStore ?? store).directory;
       if (req.method === 'PUT') {
@@ -1254,7 +1280,7 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       return json(res, 200, {
         service: 'motion-preview', protocol: 2, version: VERSION, dataDirectory: store.directory, mcp: phase1McpCapabilities,
         engine: 'hyperframes', engineVersion: HYPERFRAMES_VERSION, editor: 'opendesign-motion', nativeRuntime, ffmpeg: nativeRuntime.managed ? nativeRuntime.capabilities.media : Boolean(context.ffmpeg),
-        ready: Boolean(context.runtimeRoot && (!context.studio || context.studio.alive())), editorReady: Boolean(context.studio?.alive()), studioUrl: context.studio?.alive() ? editorUrl : undefined, nativeStudioUrl: context.studio?.url,
+        ready: Boolean(context.runtimeRoot && (!context.studio || context.studio.alive())), editorReady: Boolean(context.studio?.alive()), activeWork: runningExports.size > 0 || (context.phase1?.pending ?? 0) > 0, studioUrl: context.studio?.alive() ? editorUrl : undefined, nativeStudioUrl: context.studio?.url,
         ...(context.runtimeRoot ? { hyperframesCli: cliPath(context.runtimeRoot), authoringGuide: path.join(context.runtimeRoot, 'node_modules/hyperframes/dist/skills/hyperframes/SKILL.md') } : {}),
       });
     }
@@ -1317,14 +1343,12 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       }
       if (url.pathname === '/api/settings/account' && req.method === 'GET') return json(res, 200, await gateway.account.summary(url.searchParams.get('refresh') === 'true'));
       if (url.pathname === '/api/settings/account/login' && req.method === 'POST') {
-        const body = await input(req).catch(() => ({}));
-        return json(res, 200, await gateway.account.login({ hookId: body.hookId, entryId: body.entryId }));
+        return json(res, 200, await gateway.account.login(await accountAttribution(req)));
       }
       if (url.pathname === '/api/settings/account/cancel' && req.method === 'POST') return json(res, 200, await gateway.account.cancel());
       if (url.pathname === '/api/settings/account/logout' && req.method === 'POST') return json(res, 200, await gateway.account.logout());
       if (url.pathname === '/api/settings/account/subscription' && req.method === 'POST') {
-        const body = await input(req).catch(() => ({}));
-        return json(res, 200, await gateway.account.openSubscription(undefined, { hookId: body.hookId, entryId: body.entryId }));
+        return json(res, 200, await gateway.account.openSubscription(undefined, await accountAttribution(req)));
       }
       return json(res, 404, { error: 'Settings endpoint not found' });
     }
