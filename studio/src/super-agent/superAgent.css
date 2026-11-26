@@ -12136,7 +12136,7 @@
   --hero-b: var(--motion-game-hero-orange);
   --hero-sweep: var(--motion-game-hero-coin-glow);
   /* Height of the genre figures at the bottom of the hero; the art background stops above them. */
-  --hero-figures: 130px;
+  --hero-figures: 112px;
   isolation: isolate;
   /* The switch and headline sit below the top row of cards; the genre figures close the hero right
      on top of the composer, so figures, toolbar and input read as one group. */
@@ -12207,8 +12207,8 @@
 
 .om-sa-game-stage { display: contents; }
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-mode-hero-copy { order: 1; z-index: 1; max-width: 62%; }
-/* Genre shortcuts: square game-scene thumbnails on a panel that tucks under the composer's top edge,
-   so the row and the input read as one piece. */
+/* Genre shortcuts: square game-scene thumbnails on a panel that runs behind the composer's top edge. The
+   thumbnails reach the composer and carry their names, so the row and the input read as one piece. */
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip {
   order: 3;
   z-index: 1;
@@ -12218,22 +12218,21 @@
   width: min(100% - 64px, 716px);
   max-width: none;
   margin-top: var(--motion-space-20);
-  /* The panel runs behind the composer's top edge, so the two read as one piece. */
-  padding: var(--motion-space-10) var(--motion-space-24) 30px;
+  /* The hero tucks 24px under the composer, so the thumbnails' bottom edge meets the input. */
+  padding: var(--motion-space-12) var(--motion-space-24) 24px;
   box-sizing: border-box;
   border-radius: var(--motion-radius-xl) var(--motion-radius-xl) 0 0;
-  /* Same surface as the composer, so the panel reads as its top half. */
-  background: var(--motion-panel);
+  background: color-mix(in srgb, var(--motion-panel) 55%, var(--motion-bg));
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card {
+  position: relative;
   display: grid;
   justify-items: center;
-  gap: var(--motion-space-4);
   padding: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--motion-muted);
+  color: var(--motion-text);
   font-size: var(--motion-text-sm);
 }
 
@@ -12241,26 +12240,52 @@
   background: transparent;
   box-shadow: none;
   transform: none;
-  color: var(--motion-text);
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-art {
+  position: relative;
   width: 100%;
-  max-width: 56px;
-  border-radius: var(--motion-radius-md);
-  box-shadow: var(--motion-shadow-sm);
-  transition: transform 200ms ease, box-shadow 200ms ease;
+  max-width: 76px;
+  border-radius: var(--motion-radius-lg) var(--motion-radius-lg) 0 0;
+  box-shadow: none;
+  transition: transform 200ms ease;
+}
+
+/* Shade the lower part of each thumbnail so the genre name on top of it stays readable. */
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-art::after {
+  content: '';
+  position: absolute;
+  inset: 45% 0 0;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--motion-game-hero-night) 85%, transparent));
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-art img {
+  filter: brightness(0.8) saturate(0.85);
+  transition: filter 200ms ease;
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card:is(:hover, [data-active]) .om-sa-game-genre-art img {
+  filter: none;
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card:hover .om-sa-game-genre-art {
   transform: translateY(-3px);
-  box-shadow: var(--motion-shadow-md);
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] .om-sa-game-genre-art {
   transform: translateY(-3px);
   outline: 2px solid var(--motion-accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card > span:last-child {
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--motion-space-6);
+  z-index: 1;
+  text-align: center;
+  font-weight: var(--motion-weight-semibold);
+  text-shadow: 0 1px 4px var(--motion-game-hero-night);
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] > span:last-child {
