@@ -12142,6 +12142,9 @@
   --hero-a: var(--motion-game-hero-coin);
   --hero-b: var(--motion-game-hero-orange);
   --hero-sweep: var(--motion-game-hero-coin-glow);
+  /* One design pixel, scaled with the stream's width (1180px is the reference), so the cards, headline
+     and spacing grow together on wide screens and shrink together on narrow ones. */
+  --hero-u: clamp(0.75px, calc(100cqi / 1180), 1.35px);
   /* Height of the genre figures at the bottom of the hero; the art background stops above them. */
   --hero-figures: 112px;
   isolation: isolate;
@@ -12162,7 +12165,7 @@
 /* Overrides the game stream's hero padding: room for the top row of cards above the switch. The
    negative bottom margin tucks the genre figures panel under the composer's top edge. */
 .om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) {
-  padding-block: 210px 0;
+  padding-block: calc(200 * var(--hero-u)) 0;
   margin-bottom: -40px;
 }
 
@@ -12428,7 +12431,7 @@
 
 /* Large headline with a light sweep across the letters. */
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 {
-  font-size: clamp(28px, 3.1vw, 48px);
+  font-size: clamp(30px, calc(44 * var(--hero-u)), 56px);
   white-space: nowrap;
   font-weight: var(--motion-weight-bold);
   letter-spacing: -0.035em;
@@ -12493,14 +12496,14 @@
     om-sa-float-bob 6s ease-in-out calc(var(--float-delay) + 820ms) infinite alternate;
 }
 
-.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: 179px; --float-tilt: -6deg; }
-.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: 100px; --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: 169px; --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: 100px; --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: 187px; --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: 100px; --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
+.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: calc(179 * var(--hero-u)); --float-tilt: -6deg; }
+.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: calc(100 * var(--hero-u)); --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: calc(169 * var(--hero-u)); --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: calc(100 * var(--hero-u)); --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: calc(187 * var(--hero-u)); --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: calc(100 * var(--hero-u)); --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
 /* Centerpiece above the switch: the largest, nearest card. */
-.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: 240px; margin-left: -120px; z-index: 1; --float-delay: 0ms; --depth: 40; }
+.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: calc(240 * var(--hero-u)); margin-left: calc(-120 * var(--hero-u)); z-index: 1; --float-delay: 0ms; --depth: 40; }
 
 /* Farther cards are slightly dimmer; no blur, so their art stays sharp. */
 .om-sa-game-float-item[data-slot="1"],
@@ -12508,8 +12511,8 @@
 .om-sa-game-float-item[data-slot="5"] { filter: brightness(0.9); }
 
 /* Money-making games are portrait, so every card is portrait in that mode. */
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: 102px; }
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: 119px; }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: calc(102 * var(--hero-u)); }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: calc(119 * var(--hero-u)); }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="2"]) { left: 3%; }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="4"], [data-slot="5"]) { right: 3%; }
 
