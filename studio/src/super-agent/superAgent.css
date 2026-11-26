@@ -12614,7 +12614,8 @@
   .om-sa-game-float { display: none; }
   .om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) { padding-top: var(--motion-space-24); }
   .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip { margin-top: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 { white-space: normal; }
+  /* Narrow screens: shrink the headline with the stream so English stays on one line too. */
+  .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 { font-size: clamp(22px, 5cqi, 33px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
