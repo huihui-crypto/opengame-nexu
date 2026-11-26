@@ -1752,10 +1752,11 @@ export function ModeResourceShowcase({
                   // template list below and the scroll position stay where they are.
                   onClick={() => onChangeModeOptions?.({ gameGenre: selected ? null : id })}
                 >
-                  <span className="om-sa-game-genre-art" aria-hidden="true">
+                  {/* The name sits inside the thumbnail so it is centered on the picture, not on the grid cell. */}
+                  <span className="om-sa-game-genre-art">
                     {cover ? <img src={cover} alt="" /> : <RemixIcon name="gamepad-line" size={22} />}
+                    <span className="om-sa-game-genre-name">{t(genreLabels[id])}</span>
                   </span>
-                  <span>{t(genreLabels[id])}</span>
                 </Button>
               );
             })}

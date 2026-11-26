@@ -12285,17 +12285,21 @@
   outline-offset: -2px;
 }
 
-.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card > span:last-child {
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-name {
   position: absolute;
-  inset-inline: 0;
+  inset-inline: var(--motion-space-4);
   bottom: var(--motion-space-6);
   z-index: 1;
+  overflow: hidden;
   text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-weight: var(--motion-weight-semibold);
+  line-height: 1.25;
   text-shadow: 0 1px 4px var(--motion-game-hero-night);
 }
 
-.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] > span:last-child {
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] .om-sa-game-genre-name {
   color: var(--motion-accent);
 }
 
