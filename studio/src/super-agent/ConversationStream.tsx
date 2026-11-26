@@ -1158,7 +1158,8 @@ export function ConversationStream({
                       setting: activeModeOptions.gameSetting ?? selectedTemplate.setting,
                       multiplayer: false,
                       orientation: activeModeOptions.gameOrientation ?? selectedTemplate.orientation ?? 'landscape',
-                      playableAd: isPlayableAd(activeModeOptions) || (activeModeOptions.gameOrientation === null && Boolean(selectedTemplate.playableAd)),
+                      // The Game Studio mode decides the format: money-making builds a playable ad, indie never does.
+                      playableAd: isPlayableAd(activeModeOptions),
                     }
                   : {
                       prompt: snapText.trim() || gameBrief,

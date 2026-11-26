@@ -12137,9 +12137,9 @@
   --hero-sweep: var(--motion-game-hero-coin-glow);
   isolation: isolate;
   justify-content: center;
-  min-height: 340px;
+  min-height: 360px;
   gap: var(--motion-space-18);
-  padding-block: var(--motion-space-16) var(--motion-space-10);
+  padding-block: var(--motion-space-24) var(--motion-space-12);
   overflow: hidden;
   perspective: 1200px;
 }
@@ -12202,10 +12202,10 @@
   order: 3;
   z-index: 1;
   position: absolute;
-  bottom: var(--motion-space-10);
+  bottom: var(--motion-space-14);
   display: flex;
   justify-content: center;
-  gap: var(--motion-space-6);
+  gap: var(--motion-space-8);
   max-width: none;
 }
 
@@ -12316,7 +12316,7 @@
 
 /* Large headline with a light sweep across the letters. */
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 {
-  font-size: clamp(28px, 3vw, 46px);
+  font-size: clamp(30px, 3.2vw, 50px);
   white-space: nowrap;
   font-weight: var(--motion-weight-bold);
   letter-spacing: -0.035em;
@@ -12364,7 +12364,7 @@
 /* Floating display cards around the headline, at different depths. */
 .om-sa-game-float {
   position: absolute;
-  inset: var(--motion-space-8) 0 52px;
+  inset: var(--motion-space-12) 0 64px;
   z-index: 0;
   pointer-events: none;
   transform-style: preserve-3d;
@@ -12381,14 +12381,14 @@
     om-sa-float-bob 6s ease-in-out calc(var(--float-delay) + 820ms) infinite alternate;
 }
 
-.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: 133px; --float-tilt: -6deg; }
-.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: 74px; --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: 126px; --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: 74px; --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: 139px; --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: 74px; --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
+.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: 149px; --float-tilt: -6deg; }
+.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: 83px; --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: 141px; --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: 83px; --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: 156px; --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: 83px; --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
 /* Centerpiece above the switch: the largest, nearest card. */
-.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: 179px; margin-left: -90px; z-index: 1; --float-delay: 0ms; --depth: 40; }
+.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: 200px; margin-left: -100px; z-index: 1; --float-delay: 0ms; --depth: 40; }
 
 /* Farther cards are slightly dimmer; no blur, so their art stays sharp. */
 .om-sa-game-float-item[data-slot="1"],
@@ -12396,8 +12396,8 @@
 .om-sa-game-float-item[data-slot="5"] { filter: brightness(0.9); }
 
 /* Money-making games are portrait, so every card is portrait in that mode. */
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: 76px; }
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: 88px; }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: 85px; }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: 99px; }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="2"]) { left: 3%; }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="4"], [data-slot="5"]) { right: 3%; }
 
