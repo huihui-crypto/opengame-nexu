@@ -1562,6 +1562,11 @@ export function ConversationStream({
 
 
   // Mode options bar: above the composer for most modes, inside the composer toolbar for Game Studio.
+  // The Game Studio hero (landing page only) puts its options inside the composer toolbar.
+  const gameHeroOnScreen = activeMode?.id === 'game' && !chat?.messages.length && !pendingSubmission && !publishEntries.length;
+  // Inside a Game Studio conversation the composer stays plain (attach, agent, send): the game's options
+  // were picked on the landing page and still travel with each message.
+  const gameConversation = activeMode?.id === 'game' && !gameHeroOnScreen;
   const modeTopBar = activeMode ? (
       <ModeComposerTopBar
         active={active}
@@ -1570,7 +1575,7 @@ export function ConversationStream({
         attachments={attachments}
         disabled={sending || hasPendingApproval}
         // The Game Studio hero owns the money-making game switch while it is on screen.
-        showPlayableAdSwitch={!(activeMode.id === 'game' && !chat?.messages.length && !pendingSubmission && !publishEntries.length)}
+        showPlayableAdSwitch={!gameHeroOnScreen}
         onChange={changeLandingOptions}
         onCatalogChange={handleCatalogChange}
         onOpenResourcePicker={category => {
@@ -2489,7 +2494,7 @@ export function ConversationStream({
                 icon={<RemixIcon name={uploading ? 'loader-4-line' : 'add-line'} size={18} />}
               />
 
-              {active && activeMode && (
+              {active && activeMode && !gameConversation && (
                 <span className="om-sa-active-mode-pill" data-mode={activeMode.id}>
                   <Select
                     appearance="boxed"
@@ -2516,9 +2521,9 @@ export function ConversationStream({
                 </span>
               )}
 
-              {activeMode?.id === 'game' && modeTopBar}
+              {gameHeroOnScreen && modeTopBar}
 
-              {activeMode && (
+              {activeMode && !gameConversation && (
                 <ModeComposerControls
                   active={active}
                   modeId={activeMode.id}
