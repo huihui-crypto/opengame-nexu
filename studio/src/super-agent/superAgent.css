@@ -12136,10 +12136,10 @@
   --hero-b: var(--motion-game-hero-orange);
   --hero-sweep: var(--motion-game-hero-coin-glow);
   isolation: isolate;
-  justify-content: center;
-  min-height: 360px;
+  /* The switch and headline sit below the top row of cards; the genre strip closes the hero right
+     above the composer, so strip, toolbar and input read as one group. */
+  justify-content: flex-start;
   gap: var(--motion-space-18);
-  padding-block: var(--motion-space-24) var(--motion-space-12);
   overflow: hidden;
   perspective: 1200px;
 }
@@ -12148,6 +12148,11 @@
   --hero-a: var(--motion-game-hero-red);
   --hero-b: var(--motion-game-hero-blue);
   --hero-sweep: var(--motion-game-hero-ink);
+}
+
+/* Overrides the game stream's hero padding: room for the top row of cards above the switch. */
+.om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) {
+  padding-block: 168px var(--motion-space-4);
 }
 
 /* Drifting aurora behind everything. */
@@ -12196,13 +12201,11 @@
 
 .om-sa-game-stage { display: contents; }
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-mode-hero-copy { order: 1; z-index: 1; max-width: 62%; }
-/* The genre strip sits below the floating cards as one row of compact pills, so the template list
-   below stays on the first screen. */
+/* The genre strip is one row of compact pills at the bottom of the hero, next to the composer. */
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip {
   order: 3;
   z-index: 1;
-  position: absolute;
-  bottom: var(--motion-space-14);
+  margin-top: var(--motion-space-28);
   display: flex;
   justify-content: center;
   gap: var(--motion-space-8);
@@ -12364,7 +12367,7 @@
 /* Floating display cards around the headline, at different depths. */
 .om-sa-game-float {
   position: absolute;
-  inset: var(--motion-space-12) 0 64px;
+  inset: var(--motion-space-12) 0 84px;
   z-index: 0;
   pointer-events: none;
   transform-style: preserve-3d;
@@ -12497,8 +12500,8 @@
 
 @media (max-width: 820px) {
   .om-sa-game-float { display: none; }
-  .om-sa-mode-hero:has(.om-sa-game-stage) { min-height: 0; }
-  .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip { position: static; }
+  .om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) { padding-top: var(--motion-space-24); }
+  .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip { margin-top: 0; }
   .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 { white-space: normal; }
 }
 

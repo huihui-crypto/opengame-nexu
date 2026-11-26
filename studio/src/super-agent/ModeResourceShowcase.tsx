@@ -426,7 +426,7 @@ function isVizTemplate(item: SuperAgentResourceAttachment): boolean {
 /**
  * Game Studio hero themes, picked by the hero's mode switch: "money" is the money-making game
  * (playable ad) option turned on, "epic" turned off. Each theme has its own headline, floating
- * display cards and template batch in the list below.
+ * display cards; the template list below always shows every template.
  */
 export type GameHeroTheme = 'money' | 'epic';
 export const GAME_HERO_TITLES: Record<GameHeroTheme, string> = {
@@ -1067,22 +1067,10 @@ export function ModeResourceShowcase({
       ? (isPlayableAd(modeOptions) ? 'money' : 'epic')
       : lastGameThemeRef.current;
   lastGameThemeRef.current = gameTheme;
-  // The template list below follows the current mode's batch.
-  const modeGameTemplates = useMemo(
-    () => (mode.id === 'game' ? gameHeroBatch(publishedGameTemplates, gameTheme) : publishedGameTemplates),
-    [mode.id, publishedGameTemplates, gameTheme],
-  );
   const heroFloatCards = useMemo(
     () => gameHeroCards(publishedGameTemplates, gameTheme),
     [publishedGameTemplates, gameTheme],
   );
-  const [shownGameTheme, setShownGameTheme] = useState(gameTheme);
-  if (shownGameTheme !== gameTheme) {
-    setShownGameTheme(gameTheme);
-    // The list below switches batch too, so start it from the full batch.
-    if (activeFilter !== 'mine') setActiveFilter('all');
-    setGameQuery('');
-  }
   const switchGameTheme = (next: GameHeroTheme) => {
     if (!onChangeModeOptions) return;
     // An attached built-in template blocks the money-making option while the hero keeps showing it, so
@@ -1229,20 +1217,17 @@ export function ModeResourceShowcase({
         ];
       }
       case 'game': {
-        // Counts follow the hero mode's batch; empty tabs are hidden.
-        const topEarningCount = modeGameTemplates.filter(isTopEarningGame).length;
-        const portraitCount = modeGameTemplates.filter(g => g.orientation === 'portrait').length;
+        const topEarningCount = publishedGameTemplates.filter(isTopEarningGame).length;
+        const portraitCount = publishedGameTemplates.filter(g => g.orientation === 'portrait').length;
         return [
-          { id: 'all', label: 'All games', count: modeGameTemplates.length },
-          ...(topEarningCount > 0 && topEarningCount < modeGameTemplates.length ? [{ id: 'top-earning', label: TOP_EARNING_TAG, count: topEarningCount }] : []),
+          { id: 'all', label: 'All games', count: publishedGameTemplates.length },
+          ...(topEarningCount > 0 ? [{ id: 'top-earning', label: TOP_EARNING_TAG, count: topEarningCount }] : []),
           ...(myGames.length > 0 ? [{ id: 'mine', label: 'My games', count: myGames.length }] : []),
-          ...gameGenres
-            .map(g => ({
-              id: `genre:${g}`,
-              label: genreLabels[g],
-              count: modeGameTemplates.filter(item => item.genre === g).length,
-            }))
-            .filter(item => item.count > 0),
+          ...gameGenres.map(g => ({
+            id: `genre:${g}`,
+            label: genreLabels[g],
+            count: publishedGameTemplates.filter(item => item.genre === g).length,
+          })),
           { id: 'portrait', label: 'Playable ads', count: portraitCount },
         ];
       }
@@ -1273,7 +1258,7 @@ export function ModeResourceShowcase({
         ];
       }
     }
-  }, [mode.id, modeOptions?.designFormat, isPureVideoView, designTemplates, designProjects, designSkills, modeGameTemplates, myGames, coveredMotion.catalog, motionCatalog, motionPurposes, isZh]);
+  }, [mode.id, modeOptions?.designFormat, isPureVideoView, designTemplates, designProjects, designSkills, publishedGameTemplates, myGames, coveredMotion.catalog, motionCatalog, motionPurposes, isZh]);
 
   const brandKitList = useShowcaseResourceList('brand-kit', active && filters.some(filter => filter.id === 'brand-kit'));
   const resourceQuery = mode.id === 'design' || mode.id === 'research' || mode.id === 'visualization'
@@ -1539,12 +1524,12 @@ export function ModeResourceShowcase({
     const base = activeFilter === 'mine'
       ? myGames
       : activeFilter === 'top-earning'
-        ? modeGameTemplates.filter(isTopEarningGame)
+        ? publishedGameTemplates.filter(isTopEarningGame)
         : activeFilter === 'portrait'
-          ? modeGameTemplates.filter(g => g.orientation === 'portrait')
+          ? publishedGameTemplates.filter(g => g.orientation === 'portrait')
           : activeFilter.startsWith('genre:')
-            ? modeGameTemplates.filter(item => item.genre === (activeFilter.slice(6) as GameGenre))
-            : modeGameTemplates;
+            ? publishedGameTemplates.filter(item => item.genre === (activeFilter.slice(6) as GameGenre))
+            : publishedGameTemplates;
     const ranked = needle
       ? rankSearchResults(base, needle, game => ({
           id: game.id,
@@ -1571,7 +1556,7 @@ export function ModeResourceShowcase({
     if (gameSort === 'newest') return [...matched].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     if (needle) return matched;
     return interleavePortrait(matched);
-  }, [showGameCards, activeFilter, modeGameTemplates, myGames, gameQuery, gameSort, locale, t]);
+  }, [showGameCards, activeFilter, publishedGameTemplates, myGames, gameQuery, gameSort, locale, t]);
 
   const totalCount = showGameCards
     ? filteredGames.length
@@ -1701,7 +1686,7 @@ export function ModeResourceShowcase({
         )}
         {mode.id === 'game' && heroFloatCards.length > 0 ? (
           // Game hero: mode switch and a large headline, with that mode's games floating around it.
-          // The switch sets the money-making game option and swaps the template list below.
+          // The switch sets the money-making game option; the template list below stays the same.
           <div className="om-sa-game-stage" data-theme={gameTheme}>
             {onChangeModeOptions && (
               <div className="om-sa-game-mode-switch" role="radiogroup" aria-label={t('Game type')} data-theme={gameTheme}>

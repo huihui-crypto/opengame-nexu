@@ -3633,9 +3633,7 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Build games. Turn play into pay.');
 
   // Selecting a gallery template fills an editable draft and preserves user edits across toggles.
-  // The list follows the hero mode and pages its results: switch to the AAA batch and search for this community racer.
-  await act(async () => epicKey.click());
-  await flush();
+  // The list pages its results, so search for this community racer.
   const racingGame = communityGames.find(game => game.id === 'community-turbo-kart')!;
   const searchInput = container.querySelector<HTMLInputElement>('.om-sa-game-search input')!;
   await act(async () => {
