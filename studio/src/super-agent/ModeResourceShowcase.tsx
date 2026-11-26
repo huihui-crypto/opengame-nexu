@@ -431,7 +431,7 @@ function isVizTemplate(item: SuperAgentResourceAttachment): boolean {
 export type GameHeroTheme = 'money' | 'epic';
 export const GAME_HERO_TITLES: Record<GameHeroTheme, string> = {
   money: 'Build games. Turn play into pay.',
-  epic: 'Make your next hit game.',
+  epic: 'Make your next viral game.',
 };
 
 type HeroFloatCard = { id: string; src: string; focus?: string };
@@ -1688,7 +1688,7 @@ export function ModeResourceShowcase({
                     onClick={() => switchGameTheme(id)}
                   >
                     <RemixIcon name={id === 'money' ? 'sparkling-fill' : 'gamepad-line'} size={14} />
-                    <span>{(id === 'money' ? t('Playable ad', undefined, 'game mode') : t('Hit game'))}</span>
+                    <span>{(id === 'money' ? t('Playable ad', undefined, 'game mode') : t('Viral game'))}</span>
                   </Button>
                 ))}
               </div>

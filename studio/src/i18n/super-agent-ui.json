@@ -1141,8 +1141,8 @@
     "Game type": "游戏类型",
     "Remove genre": "移除类型",
     "Playable ad (game mode)": "赚钱游戏",
-    "Hit game": "爆款游戏",
-    "Make your next hit game.": "做一款你的爆款游戏"
+    "Viral game": "爆款游戏",
+    "Make your next viral game.": "做一款你的爆款游戏"
   },
   "ja": {
     "Play again": "もう一度遊ぶ",
@@ -2286,8 +2286,8 @@
     "Game type": "ゲームの種類",
     "Remove genre": "ジャンルを外す",
     "Playable ad (game mode)": "プレイアブル広告",
-    "Hit game": "ヒットゲーム",
-    "Make your next hit game.": "次のヒットゲームを作ろう"
+    "Viral game": "バズるゲーム",
+    "Make your next viral game.": "次にバズるゲームを作ろう"
   },
   "ko": {
     "Play again": "다시 플레이",
@@ -3431,8 +3431,8 @@
     "Game type": "게임 유형",
     "Remove genre": "장르 제거",
     "Playable ad (game mode)": "플레이어블 광고",
-    "Hit game": "히트 게임",
-    "Make your next hit game.": "다음 히트 게임을 만드세요"
+    "Viral game": "바이럴 게임",
+    "Make your next viral game.": "다음 바이럴 게임을 만드세요"
   },
   "de": {
     "Play again": "Erneut spielen",
@@ -4579,8 +4579,8 @@
     "Game type": "Spieltyp",
     "Remove genre": "Genre entfernen",
     "Playable ad (game mode)": "Playable Ad",
-    "Hit game": "Hit-Spiel",
-    "Make your next hit game.": "Erschaffe dein nächstes Hit-Spiel."
+    "Viral game": "Virales Spiel",
+    "Make your next viral game.": "Erschaffe dein nächstes virales Spiel."
   },
   "fr": {
     "Play again": "Rejouer",
@@ -5727,8 +5727,8 @@
     "Game type": "Type de jeu",
     "Remove genre": "Retirer le genre",
     "Playable ad (game mode)": "Publicité jouable",
-    "Hit game": "Jeu à succès",
-    "Make your next hit game.": "Créez votre prochain jeu à succès."
+    "Viral game": "Jeu viral",
+    "Make your next viral game.": "Créez votre prochain jeu viral."
   },
   "ru": {
     "Play again": "Сыграть ещё",
@@ -6877,8 +6877,8 @@
     "Game type": "Тип игры",
     "Remove genre": "Убрать жанр",
     "Playable ad (game mode)": "Играбельная реклама",
-    "Hit game": "Хитовая игра",
-    "Make your next hit game.": "Создайте свою следующую хитовую игру."
+    "Viral game": "Вирусная игра",
+    "Make your next viral game.": "Создайте свою следующую вирусную игру."
   },
   "es": {
     "Play again": "Volver a jugar",
@@ -8025,8 +8025,8 @@
     "Game type": "Tipo de juego",
     "Remove genre": "Quitar género",
     "Playable ad (game mode)": "Anuncio jugable",
-    "Hit game": "Juego de éxito",
-    "Make your next hit game.": "Crea tu próximo juego de éxito."
+    "Viral game": "Juego viral",
+    "Make your next viral game.": "Crea tu próximo juego viral."
   },
   "pt-BR": {
     "Play again": "Jogar novamente",
@@ -9173,8 +9173,8 @@
     "Game type": "Tipo de jogo",
     "Remove genre": "Remover gênero",
     "Playable ad (game mode)": "Anúncio jogável",
-    "Hit game": "Jogo de sucesso",
-    "Make your next hit game.": "Crie seu próximo jogo de sucesso."
+    "Viral game": "Jogo viral",
+    "Make your next viral game.": "Crie seu próximo jogo viral."
   },
   "it": {
     "Play again": "Gioca ancora",
@@ -10321,8 +10321,8 @@
     "Game type": "Tipo di gioco",
     "Remove genre": "Rimuovi genere",
     "Playable ad (game mode)": "Annuncio giocabile",
-    "Hit game": "Gioco di successo",
-    "Make your next hit game.": "Crea il tuo prossimo gioco di successo."
+    "Viral game": "Gioco virale",
+    "Make your next viral game.": "Crea il tuo prossimo gioco virale."
   },
   "tr": {
     "Play again": "Tekrar oyna",
@@ -11466,7 +11466,7 @@
     "Game type": "Oyun türü",
     "Remove genre": "Türü kaldır",
     "Playable ad (game mode)": "Oynanabilir reklam",
-    "Hit game": "Hit oyun",
-    "Make your next hit game.": "Bir sonraki hit oyununu yap."
+    "Viral game": "Viral oyun",
+    "Make your next viral game.": "Bir sonraki viral oyununu yap."
   }
 }
