@@ -1738,8 +1738,8 @@ export function ModeResourceShowcase({
           <div className="om-sa-game-genre-strip" role="group" aria-label={t('Genre')}>
             {gameGenres.map(id => {
               const selected = modeOptions?.gameGenre === id;
-              // Transparent character art, so the figures stand on the panel above the composer.
-              const cover = genreCovers[id];
+              // Square game-scene thumbnails drawn in the style of each genre's best-known hits.
+              const cover = genreHomeCovers[id];
               return (
                 <Button
                   key={id}
