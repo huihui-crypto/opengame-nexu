@@ -1688,7 +1688,7 @@ export function ModeResourceShowcase({
                     onClick={() => switchGameTheme(id)}
                   >
                     <RemixIcon name={id === 'money' ? 'sparkling-fill' : 'gamepad-line'} size={14} />
-                    <span>{t(id === 'money' ? 'Money-making game' : 'Indie game')}</span>
+                    <span>{(id === 'money' ? t('Playable ad', undefined, 'game mode') : t('Indie game'))}</span>
                   </Button>
                 ))}
               </div>

@@ -3656,9 +3656,9 @@ export function ModeComposerTopBar({
               className="om-sa-composer-top-pill cursor-pointer"
               data-active={isPlayableAd(options) || undefined}
             >
-              <span>{t('Money-making game')}</span>
+              <span>{t('Playable ad', undefined, 'game mode')}</span>
               <Toggle
-                label={t('Money-making game')}
+                label={t('Playable ad', undefined, 'game mode')}
                 checked={isPlayableAd(options)}
                 disabled={disabled}
                 onCommit={enabled => onChange({ gamePlayableAd: enabled })}

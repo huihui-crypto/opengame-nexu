@@ -1139,10 +1139,10 @@
     "Make your next AAA hit.": "制作你的下一款 3A 大作",
     "AAA game": "3A 大作",
     "Game type": "游戏类型",
-    "Money-making game": "赚钱游戏",
     "Indie game": "独立游戏",
     "Make the indie game only you could make.": "做一款你的独立游戏",
-    "Remove genre": "移除类型"
+    "Remove genre": "移除类型",
+    "Playable ad (game mode)": "赚钱游戏"
   },
   "ja": {
     "Play again": "もう一度遊ぶ",
@@ -2284,10 +2284,10 @@
     "Make your next AAA hit.": "次の AAA ヒット作を作ろう",
     "AAA game": "AAA 大作",
     "Game type": "ゲームの種類",
-    "Money-making game": "稼げるゲーム",
     "Indie game": "インディーゲーム",
     "Make the indie game only you could make.": "あなたにしか作れないインディーゲームを",
-    "Remove genre": "ジャンルを外す"
+    "Remove genre": "ジャンルを外す",
+    "Playable ad (game mode)": "プレイアブル広告"
   },
   "ko": {
     "Play again": "다시 플레이",
@@ -3429,10 +3429,10 @@
     "Make your next AAA hit.": "다음 AAA 히트작을 만드세요",
     "AAA game": "AAA 대작",
     "Game type": "게임 유형",
-    "Money-making game": "돈 버는 게임",
     "Indie game": "인디 게임",
     "Make the indie game only you could make.": "당신만 만들 수 있는 인디 게임을 만드세요",
-    "Remove genre": "장르 제거"
+    "Remove genre": "장르 제거",
+    "Playable ad (game mode)": "플레이어블 광고"
   },
   "de": {
     "Play again": "Erneut spielen",
@@ -4577,10 +4577,10 @@
     "Make your next AAA hit.": "Erschaffe deinen nächsten AAA-Hit.",
     "AAA game": "AAA-Spiel",
     "Game type": "Spieltyp",
-    "Money-making game": "Spiel zum Geldverdienen",
     "Indie game": "Indie-Spiel",
     "Make the indie game only you could make.": "Erschaffe das Indie-Spiel, das nur du machen kannst.",
-    "Remove genre": "Genre entfernen"
+    "Remove genre": "Genre entfernen",
+    "Playable ad (game mode)": "Playable Ad"
   },
   "fr": {
     "Play again": "Rejouer",
@@ -5725,10 +5725,10 @@
     "Make your next AAA hit.": "Créez votre prochain hit AAA.",
     "AAA game": "Jeu AAA",
     "Game type": "Type de jeu",
-    "Money-making game": "Jeu qui rapporte",
     "Indie game": "Jeu indé",
     "Make the indie game only you could make.": "Créez le jeu indé que vous seul pouviez faire.",
-    "Remove genre": "Retirer le genre"
+    "Remove genre": "Retirer le genre",
+    "Playable ad (game mode)": "Publicité jouable"
   },
   "ru": {
     "Play again": "Сыграть ещё",
@@ -6875,10 +6875,10 @@
     "Make your next AAA hit.": "Создайте свой следующий AAA-хит.",
     "AAA game": "AAA-игра",
     "Game type": "Тип игры",
-    "Money-making game": "Игра для заработка",
     "Indie game": "Инди-игра",
     "Make the indie game only you could make.": "Создайте инди-игру, которую можете сделать только вы.",
-    "Remove genre": "Убрать жанр"
+    "Remove genre": "Убрать жанр",
+    "Playable ad (game mode)": "Играбельная реклама"
   },
   "es": {
     "Play again": "Volver a jugar",
@@ -8023,10 +8023,10 @@
     "Make your next AAA hit.": "Crea tu próximo éxito AAA.",
     "AAA game": "Juego AAA",
     "Game type": "Tipo de juego",
-    "Money-making game": "Juego para ganar dinero",
     "Indie game": "Juego indie",
     "Make the indie game only you could make.": "Crea el juego indie que solo tú podrías hacer.",
-    "Remove genre": "Quitar género"
+    "Remove genre": "Quitar género",
+    "Playable ad (game mode)": "Anuncio jugable"
   },
   "pt-BR": {
     "Play again": "Jogar novamente",
@@ -9171,10 +9171,10 @@
     "Make your next AAA hit.": "Crie seu próximo sucesso AAA.",
     "AAA game": "Jogo AAA",
     "Game type": "Tipo de jogo",
-    "Money-making game": "Jogo para ganhar dinheiro",
     "Indie game": "Jogo indie",
     "Make the indie game only you could make.": "Crie o jogo indie que só você poderia fazer.",
-    "Remove genre": "Remover gênero"
+    "Remove genre": "Remover gênero",
+    "Playable ad (game mode)": "Anúncio jogável"
   },
   "it": {
     "Play again": "Gioca ancora",
@@ -10319,10 +10319,10 @@
     "Make your next AAA hit.": "Crea il tuo prossimo successo AAA.",
     "AAA game": "Gioco AAA",
     "Game type": "Tipo di gioco",
-    "Money-making game": "Gioco per guadagnare",
     "Indie game": "Gioco indie",
     "Make the indie game only you could make.": "Crea il gioco indie che solo tu potevi fare.",
-    "Remove genre": "Rimuovi genere"
+    "Remove genre": "Rimuovi genere",
+    "Playable ad (game mode)": "Annuncio giocabile"
   },
   "tr": {
     "Play again": "Tekrar oyna",
@@ -11464,9 +11464,9 @@
     "Make your next AAA hit.": "Bir sonraki AAA hitini yap.",
     "AAA game": "AAA oyun",
     "Game type": "Oyun türü",
-    "Money-making game": "Para kazandıran oyun",
     "Indie game": "Bağımsız oyun",
     "Make the indie game only you could make.": "Yalnızca senin yapabileceğin bağımsız oyunu yap.",
-    "Remove genre": "Türü kaldır"
+    "Remove genre": "Türü kaldır",
+    "Playable ad (game mode)": "Oynanabilir reklam"
   }
 }
