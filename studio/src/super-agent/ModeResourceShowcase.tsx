@@ -431,7 +431,7 @@ function isVizTemplate(item: SuperAgentResourceAttachment): boolean {
 export type GameHeroTheme = 'money' | 'epic';
 export const GAME_HERO_TITLES: Record<GameHeroTheme, string> = {
   money: 'Build games. Turn play into pay.',
-  epic: 'Make the indie game only you could make.',
+  epic: 'Make your own indie game.',
 };
 
 type HeroFloatCard = { id: string; src: string; focus?: string };

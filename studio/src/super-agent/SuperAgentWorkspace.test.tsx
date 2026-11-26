@@ -3626,7 +3626,7 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   await flush();
   expect(epicKey.getAttribute('aria-checked')).toBe('true');
   expect(container.querySelector('.om-sa-game-float')?.getAttribute('data-theme')).toBe('epic');
-  expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Make the indie game only you could make.');
+  expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Make your own indie game.');
   await act(async () => moneyKey.click());
   await flush();
   expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Build games. Turn play into pay.');
