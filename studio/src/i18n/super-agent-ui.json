@@ -1139,10 +1139,10 @@
     "Make your next AAA hit.": "制作你的下一款 3A 大作",
     "AAA game": "3A 大作",
     "Game type": "游戏类型",
-    "Indie game": "独立游戏",
     "Remove genre": "移除类型",
     "Playable ad (game mode)": "赚钱游戏",
-    "Make your own indie game.": "做一款你的独立游戏"
+    "Hit game": "爆款游戏",
+    "Make your next hit game.": "做一款你的爆款游戏"
   },
   "ja": {
     "Play again": "もう一度遊ぶ",
@@ -2284,10 +2284,10 @@
     "Make your next AAA hit.": "次の AAA ヒット作を作ろう",
     "AAA game": "AAA 大作",
     "Game type": "ゲームの種類",
-    "Indie game": "インディーゲーム",
     "Remove genre": "ジャンルを外す",
     "Playable ad (game mode)": "プレイアブル広告",
-    "Make your own indie game.": "自分だけのインディーゲームを作ろう"
+    "Hit game": "ヒットゲーム",
+    "Make your next hit game.": "次のヒットゲームを作ろう"
   },
   "ko": {
     "Play again": "다시 플레이",
@@ -3429,10 +3429,10 @@
     "Make your next AAA hit.": "다음 AAA 히트작을 만드세요",
     "AAA game": "AAA 대작",
     "Game type": "게임 유형",
-    "Indie game": "인디 게임",
     "Remove genre": "장르 제거",
     "Playable ad (game mode)": "플레이어블 광고",
-    "Make your own indie game.": "나만의 인디 게임을 만드세요"
+    "Hit game": "히트 게임",
+    "Make your next hit game.": "다음 히트 게임을 만드세요"
   },
   "de": {
     "Play again": "Erneut spielen",
@@ -4577,10 +4577,10 @@
     "Make your next AAA hit.": "Erschaffe deinen nächsten AAA-Hit.",
     "AAA game": "AAA-Spiel",
     "Game type": "Spieltyp",
-    "Indie game": "Indie-Spiel",
     "Remove genre": "Genre entfernen",
     "Playable ad (game mode)": "Playable Ad",
-    "Make your own indie game.": "Erschaffe dein eigenes Indie-Spiel."
+    "Hit game": "Hit-Spiel",
+    "Make your next hit game.": "Erschaffe dein nächstes Hit-Spiel."
   },
   "fr": {
     "Play again": "Rejouer",
@@ -5725,10 +5725,10 @@
     "Make your next AAA hit.": "Créez votre prochain hit AAA.",
     "AAA game": "Jeu AAA",
     "Game type": "Type de jeu",
-    "Indie game": "Jeu indé",
     "Remove genre": "Retirer le genre",
     "Playable ad (game mode)": "Publicité jouable",
-    "Make your own indie game.": "Créez votre propre jeu indé."
+    "Hit game": "Jeu à succès",
+    "Make your next hit game.": "Créez votre prochain jeu à succès."
   },
   "ru": {
     "Play again": "Сыграть ещё",
@@ -6875,10 +6875,10 @@
     "Make your next AAA hit.": "Создайте свой следующий AAA-хит.",
     "AAA game": "AAA-игра",
     "Game type": "Тип игры",
-    "Indie game": "Инди-игра",
     "Remove genre": "Убрать жанр",
     "Playable ad (game mode)": "Играбельная реклама",
-    "Make your own indie game.": "Создайте свою инди-игру."
+    "Hit game": "Хитовая игра",
+    "Make your next hit game.": "Создайте свою следующую хитовую игру."
   },
   "es": {
     "Play again": "Volver a jugar",
@@ -8023,10 +8023,10 @@
     "Make your next AAA hit.": "Crea tu próximo éxito AAA.",
     "AAA game": "Juego AAA",
     "Game type": "Tipo de juego",
-    "Indie game": "Juego indie",
     "Remove genre": "Quitar género",
     "Playable ad (game mode)": "Anuncio jugable",
-    "Make your own indie game.": "Crea tu propio juego indie."
+    "Hit game": "Juego de éxito",
+    "Make your next hit game.": "Crea tu próximo juego de éxito."
   },
   "pt-BR": {
     "Play again": "Jogar novamente",
@@ -9171,10 +9171,10 @@
     "Make your next AAA hit.": "Crie seu próximo sucesso AAA.",
     "AAA game": "Jogo AAA",
     "Game type": "Tipo de jogo",
-    "Indie game": "Jogo indie",
     "Remove genre": "Remover gênero",
     "Playable ad (game mode)": "Anúncio jogável",
-    "Make your own indie game.": "Crie seu próprio jogo indie."
+    "Hit game": "Jogo de sucesso",
+    "Make your next hit game.": "Crie seu próximo jogo de sucesso."
   },
   "it": {
     "Play again": "Gioca ancora",
@@ -10319,10 +10319,10 @@
     "Make your next AAA hit.": "Crea il tuo prossimo successo AAA.",
     "AAA game": "Gioco AAA",
     "Game type": "Tipo di gioco",
-    "Indie game": "Gioco indie",
     "Remove genre": "Rimuovi genere",
     "Playable ad (game mode)": "Annuncio giocabile",
-    "Make your own indie game.": "Crea il tuo gioco indie."
+    "Hit game": "Gioco di successo",
+    "Make your next hit game.": "Crea il tuo prossimo gioco di successo."
   },
   "tr": {
     "Play again": "Tekrar oyna",
@@ -11464,9 +11464,9 @@
     "Make your next AAA hit.": "Bir sonraki AAA hitini yap.",
     "AAA game": "AAA oyun",
     "Game type": "Oyun türü",
-    "Indie game": "Bağımsız oyun",
     "Remove genre": "Türü kaldır",
     "Playable ad (game mode)": "Oynanabilir reklam",
-    "Make your own indie game.": "Kendi bağımsız oyununu yap."
+    "Hit game": "Hit oyun",
+    "Make your next hit game.": "Bir sonraki hit oyununu yap."
   }
 }
