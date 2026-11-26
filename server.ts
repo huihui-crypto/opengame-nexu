@@ -470,6 +470,7 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       const mcpOrigin = new URL(`${mcpProto}://${host || 'localhost'}`).origin;
       await mcpHttpFor(store).handle(req, res, {
         editorToken: context.editorToken,
+        previewOrigin: resolvePublicOrigin(mcpOrigin),
         invokePhase1: payload => invokePhase1WithTracking(store, context, mcpOrigin, payload),
       });
       return;

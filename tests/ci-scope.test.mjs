@@ -25,7 +25,7 @@ test('presentation documents and game template content skip product regressions'
   });
   assert.equal(classifyChanges(['templates/games/racer/game.js', 'game-projects.ts']).full, true);
   for (const file of [
-    'skills/openmotion-director/SKILL.md', 'skills/openmotion-production/references/native.md',
+    'skills/openmotion-video/SKILL.md', 'skills/openmotion-video/references/shared/native.md',
     'install.md', 'docs/install.md', 'docs/npm-installation.md', 'AGENTS.md', 'CLAUDE.md',
     'docs/examples/product-launch.MOTION.md', 'examples/demo/README.md',
     'docs/readme/hero.png', 'library/templates/catalog/demo/guide.md', 'unknown.md',
@@ -39,7 +39,7 @@ test('code, dependency and analysis configuration changes retain maintainability
     '.github/maintainability/jscpd.json', '.github/workflows/ci.yml']) {
     assert.equal(classifyChanges([file]).maintainability, true, file);
   }
-  assert.equal(classifyChanges(['skills/openmotion-director/SKILL.md']).maintainability, false);
+  assert.equal(classifyChanges(['skills/openmotion-video/SKILL.md']).maintainability, false);
   assert.equal(classifyChanges(['docs/readme/live-product/manifest.json']).maintainability, false);
 });
 

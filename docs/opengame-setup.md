@@ -107,7 +107,7 @@ When running from a clean Git checkout on `main`, creation and generation calls 
 
 Configure only the providers you intend to use. Available models are discovered from the connected environment; paid image, music or voice generation uses the selected provider or account balance. See the [media workflow](../skills/openmotion-media/SKILL.md).
 
-- **Local publication:** `openmotion_game_publish` lists the game in this workspace's catalog. A localhost URL is only reachable on the machine running it.
+- **Local publication:** `openmotion_game_publish` lists the game in this workspace's catalog. Game tools return an absolute link to this OpenGame instance. A localhost URL is only reachable on the machine running it.
 - **Public sharing:** the separate `openmotion_assets_use` operation with `action: "web_publish"` and `targetKind: "game"` publishes a static snapshot through an authenticated OpenDesign account and hosting workspace. Follow the [game sharing guide](../skills/openmotion-game/references/game-flow.md). Check the returned status and final URL; later local edits do not automatically update a published snapshot.
 - **Multiplayer:** new creation is single-player. Existing local room-based projects keep their local server requirement; static hosting does not deploy that server.
 - **Trailers:** gameplay capture and video export have additional Chrome/FFmpeg/runtime prerequisites. Automated captures do not establish sound quality, real-device performance or human gameplay acceptance.

@@ -45,6 +45,11 @@ async function waitJob(projectId,jobId,terminal){const deadline=Date.now()+12000
 let owned;let report;
 try{
  const init=await rpc('initialize',{protocolVersion:'2025-11-25'});assert.equal(init.serverInfo.version,version);
+ const modernMeta={'io.modelcontextprotocol/protocolVersion':'2026-07-28',
+   'io.modelcontextprotocol/clientInfo':{name:'package-test',version:'1'},'io.modelcontextprotocol/clientCapabilities':{}};
+ const discovery=await rpc('server/discover',{_meta:modernMeta});assert.equal(discovery.serverInfo.version,version);
+ const modernNames=(await rpc('tools/list',{_meta:modernMeta})).tools.map(t=>t.name);
+ assert.deepEqual(modernNames,expected);
  const names=(await rpc('tools/list')).tools.map(t=>t.name);assert.deepEqual(names,expected);
  await tool('openmotion_media_use',{action:'inspect'});
  // Capture startup ownership before later Tool calls reuse the service.
@@ -52,7 +57,7 @@ try{
  const inline=await rpc('resources/read',{uri:'ui://openmotion/inline-video/v2/player.html'});assert.deepEqual(inline.contents[0]._meta.ui.csp.resourceDomains,['data:','blob:']);assert.ok(inline.contents[0].text.includes('openmotion_get_project'));
  const hidden=await rpc('tools/call',{name:'openmotion_write_files',arguments:{}});assert.equal(hidden.isError,true);assert.equal(hidden.structuredContent.error.code,'MCP_TOOL_NOT_EXPOSED');
  const prototype=await rpc('tools/call',{name:'openmotion_get_project',arguments:JSON.parse('{"__proto__":true}')});assert.equal(prototype.isError,true);assert.equal(prototype.structuredContent.error.code,'INVALID_ARGUMENT');
- const guidance=await rpc('resources/read',{uri:'openmotion://workflow/production/start'});assert.ok(guidance.contents[0].text.includes('openmotion-production'));
+ const guidance=await rpc('resources/read',{uri:'openmotion://workflow/production/start'});assert.ok(guidance.contents[0].text.includes('openmotion-video/workflows/production.md'));
  const p=await tool('openmotion_create_project',{requestId:'create',projectType:'natural_language',title:'ZIP smoke',requirements:'真实原生文件、音轨、版本恢复和MP4导出'});
  assert.equal((await tool('openmotion_create_project',{requestId:'create',projectType:'natural_language',title:'ZIP smoke',requirements:'真实原生文件、音轨、版本恢复和MP4导出'})).projectId,p.projectId);
  const guide=await rpc('resources/read',{uri:'openmotion://engine/SKILL.md'});assert.ok(guide.contents[0].text.length>100);

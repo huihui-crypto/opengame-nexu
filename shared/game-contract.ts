@@ -121,6 +121,136 @@ export function isReadyBuiltInTemplate(
   return !game.external && game.source === 'template' && (game.status === 'ready' || game.status === 'published');
 }
 
+/**
+ * Curated default display order for the Top-100 flagship TOP赚钱 mini-game templates when play counts are tied.
+ * Balances high-recognition viral genres across 20 rows (~5 screenfuls) so discovery leads with proven hits
+ * backed by upgraded full-bleed covers and hover preview clips instead of arbitrary A-Z folder names.
+ */
+export const CURATED_TOP_EARNING_ORDER: readonly string[] = [
+  // Tier 1 (Top 1–30): First-fold viral blockbusters & 3D showcase hits
+  'catch-goose-3d',
+  'plants-vs-zombies',
+  'archero-bow-legend',
+  'billiards-3d-pro',
+  'screw-puzzle',
+  'fruit-slash-frenzy',
+  'tile-stack',
+  'dream-kitchen-chef',
+  'watermelon-merge-3d',
+  'beach-soccer-pro',
+  'haunted-dorm-clash',
+  'big-hero-squad',
+  'backpack-hero',
+  'bear-dash-runner',
+  'arrow-out-3d',
+  'hoop-dunk-master',
+  '3d-mahjong',
+  'zuma-marble-blast',
+  'bus-queue-sort',
+  'heroes-tactics-war',
+  'block-blast',
+  'billiards-trick-shot',
+  'monkey-mart-idle',
+  'assault-duel-combat',
+  'parking-jam-hero',
+  'battle-cats-clash',
+  'knit-yarn-unravel',
+  'human-cannon-blast',
+  'dungeon-escape-horde',
+  'apex-drift-3d',
+
+  // Tier 2 (Top 31–65): High-recognition mini-game classics & second-fold hits
+  'save-the-dog',
+  'gold-miner',
+  'goods-sort-master',
+  'doomsday-survivor',
+  'supermarket-tycoon',
+  'sand-tetris',
+  'crowd-rush-3d',
+  'water-sort-puzzle',
+  'zombie-siege-3d',
+  'cut-the-rope-mini',
+  'rope-untangle-3d',
+  'knife-throw-frenzy',
+  'candy-match',
+  'dino-island-3d',
+  'jump-jump-3d',
+  'life-restart-sim',
+  'cube-chain-2048',
+  'drift-king-rush',
+  'yarn-sort-color',
+  'merge-plants-zombies',
+  'earn-100-million',
+  'chinese-chess-solo',
+  'car-klotski-3d',
+  'alien-sniper-3d',
+  'garden-makeover-match',
+  'mermaid-pin-rescue',
+  'blade-spin-survivor',
+  'blossom-bloom-match',
+  'five-star-clinic',
+  'flappy-pixel-bird',
+  'catch-piggy',
+  'happy-glass-draw',
+  'battle-cars-arena',
+  'my-burger-bistro',
+  'magic-tower-rpg',
+
+  // Tier 3 (Top 66–100): Polished 3D action, cozy tycoons, & evergreen puzzle/board staples
+  'gomoku-ai-pro',
+  'breakout-siege-3d',
+  'button-cut-200',
+  'kitty-snack-shop',
+  'hanzi-meme',
+  'corgi-dash-run',
+  'tetris-blast-boom',
+  'ace-archer-3d',
+  'doctor-sim-3d',
+  'classic-sudoku-pro',
+  'bullet-storm-horde',
+  'fruit-bubble-pop',
+  'piggy-escape-jam',
+  'master-chef-bistro',
+  'ludo-aero-chess',
+  'blade-clash-arena',
+  'lipstick-pin-hit',
+  'boba-tea-adventure',
+  'merge-tower-defense',
+  'fire-water-duo',
+  'tower-stack-3d',
+  'pinball-bricks-2999',
+  'monkey-dash-3d',
+  'ceo-comeback-sim',
+  'number-link-2248',
+  'catch-kitty-3d',
+  'pixel-air-strike',
+  'pipe-twist-flow',
+  'mahjong-kong-pop',
+  'master-hunter-3d',
+  'ring-stack-match',
+  'daily-drift-3d',
+  'ball-laser-bounce',
+  'imperial-palace-merge',
+  'one-stroke-dots',
+];
+
+const curatedOrderIndex = new Map(CURATED_TOP_EARNING_ORDER.map((id, index) => [id, index]));
+
+/** Canonical catalog sort: published first, then play count descending, then curated flagship order, then id. */
+export function compareGameCatalogOrder(
+  a: Pick<GameCard, 'id' | 'plays'> & { status?: GameStatus },
+  b: Pick<GameCard, 'id' | 'plays'> & { status?: GameStatus },
+): number {
+  const pubDiff = Number(b.status === 'published') - Number(a.status === 'published');
+  if (pubDiff !== 0) return pubDiff;
+  const playDiff = (b.plays ?? 0) - (a.plays ?? 0);
+  if (playDiff !== 0) return playDiff;
+  const rankA = curatedOrderIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+  const rankB = curatedOrderIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+  if (rankA !== rankB) return rankA - rankB;
+  return a.id.localeCompare(b.id);
+}
+
 const PORTRAIT_BRIEF_MARKER = 'Layout: portrait 9:16 phone game.';
 const PORTRAIT_BRIEF_SUFFIX = `${PORTRAIT_BRIEF_MARKER} Design every screen, HUD and control for a phone held upright (390×844); in a landscape window, centre the 9:16 play area and letterbox the sides.`;
 const PLAYABLE_AD_BRIEF_MARKER = 'Format: playable ad. Follow the playable-ad recipe';

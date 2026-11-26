@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CURATED_TOP_EARNING_ORDER } from '../../../../shared/game-contract';
 import { trailerProjectHref } from './GameStudio';
 import { bundledGames, isTopEarningGame, needsGameService, TOP_EARNING_TAG } from './gameCatalog';
 
@@ -64,5 +65,12 @@ describe('gameCatalog multi-file detection and internal tags', () => {
     for (const game of bundledGames.filter(isTopEarningGame)) {
       expect(game.tags).toContain(TOP_EARNING_TAG);
     }
+  });
+
+  it('orders the Top-100 curated flagship TOP赚钱 hits uniquely ahead of alphabetical uncurated ties', () => {
+    expect(CURATED_TOP_EARNING_ORDER).toHaveLength(100);
+    expect(new Set(CURATED_TOP_EARNING_ORDER).size).toBe(CURATED_TOP_EARNING_ORDER.length);
+    const topIds = bundledGames.filter(isTopEarningGame).map(game => game.id);
+    expect(topIds.slice(0, CURATED_TOP_EARNING_ORDER.length)).toEqual([...CURATED_TOP_EARNING_ORDER]);
   });
 });

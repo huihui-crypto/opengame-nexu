@@ -167,7 +167,7 @@ Use the [documentation index](docs/README.md) for related topics. Distinguish im
 
 ## Video production entry points
 
-Choose the entry for the current intent directly. Each Skill's description states its scope, and [Skill routing](docs/skills.md#职责与入口) summarises the five entries. [openmotion-production](skills/openmotion-production/SKILL.md) handles scoped engineering under established creative decisions, preview, technical checks, troubleshooting and export; its start resource keeps short navigation and is not a mandatory router.
+Choose the matching domain Skill for the current intent directly (`openmotion-video`, `openmotion-game`, `openmotion-design`, `openmotion-media`), and see [Skill routing](docs/skills.md#职责与入口). [openmotion-video](skills/openmotion-video/SKILL.md) routes all five motion-video workflows (`director`, `production`, `template-to-video`, `recreate`, `video-to-template`); MCP resource URIs (`openmotion://workflow/*/start`) stay compatible for direct access.
 
 A directly selected specialist reads shared context and continues; do not bounce back to the production start. Small edits, audio-only changes, review-only and export-only requests resume their affected scope. Keep existing decisions and locked content. Repository development and documentation do not trigger video production.
 
@@ -190,7 +190,7 @@ For changes under `library/templates/catalog/`, follow [the contributor workflow
 
 Local Studio/MCP read registered source files from the checkout; fetch optional LFS bytes for local validation. After final review, maintainers use **Prepare and merge PR** for media transfer and merge. After merging, the main catalog workflow publishes source objects and metadata to R2 automatically. Website CMS publication is a separate internal operation, only performed when explicitly requested. Do not ask contributors to upload revised project files or ZIPs to the old CMS service to complete a repository PR.
 
-`openmotion-template-to-video` implements the default template route and reuses shared context/edit and managed-project revision protection. Unchanged requests are delivered by opening the template in the editor; edited content is checked by playing it in the editor preview, with native snapshots only for layout; completed video creation/content edits follow the shared final-video delivery flow; unchanged template opening and explicit draft, editor-only or review-only work do not render unless requested. `openmotion-video-to-template` separately produces a portable reusable template from a video; it does not replace ordinary video recreation. Visual acceptance belongs to the user. Repository work does not invoke production Skills.
+The `template-to-video` workflow under `openmotion-video` implements the default template route and reuses shared context/edit and managed-project revision protection. Unchanged requests are delivered by opening the template in the editor; edited content is checked by playing it in the editor preview, with native snapshots only for layout; completed video creation/content edits follow the shared final-video delivery flow; unchanged template opening and explicit draft, editor-only or review-only work do not render unless requested. The `video-to-template` workflow under `openmotion-video` separately produces a portable reusable template from a video; it does not replace ordinary video recreation. Visual acceptance belongs to the user. Repository work does not invoke production Skills.
 
 ## Candidate and publication controls
 

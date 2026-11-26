@@ -31,10 +31,10 @@ Codex、Claude Code、DeepSeek Harness（DSH）与 WorkBuddy 从同一份已安�
 
 ```sh
 npx skills add ./skills --list
-npx skills add ./skills --skill openmotion-director openmotion-production openmotion-template-to-video openmotion-recreate openmotion-video-to-template
+npx skills add ./skills --skill openmotion-video openmotion-game openmotion-design openmotion-media
 ```
 
-显式选择五个正式入口，保留相互引用的同级目录。选择目标宿主后按 CLI 提示安装，不使用 `--all` 扩大安装范围。Skills CLI 有自己的 Node 要求；README 使用 CI 固定的 Node 26.11.1。
+显式选择四个对称域 Skill（五条视频工作流统一通过 `openmotion-video/workflows/` 按需进入），保留同级目录结构。选择目标宿主后按 CLI 提示安装，不使用 `--all` 扩大安装范围。Skills CLI 有自己的 Node 要求；README 使用 CI 固定的 Node 26.11.1。
 
 此路径仅复制制作指引及 Skill 内参考，不安装运行时、浏览器或媒体工具，也不注册 MCP。需另按下文连接已安装应用，保留源码 checkout 的共享文档，并按运行时返回的路径读取固定引擎指南。完整安装与配置保护使用[源码安装指南](install.md)。本机验证的发现/文件安装不代表宿主模型已完成创作。
 
@@ -83,7 +83,7 @@ claude plugin list --json
 
 Codex 声明 `requires_local_executor`；两家原生插件均引用同一外置 Node、bootstrap、MCP 入口和数据目录。marketplace 位于各自插件 ZIP 外，原生安装使用生成的 `codex/` 或 `claude/` 目录。同名旧 `motion-local`、`openmotion-test` 或手动 MCP 已启用时，先核对、选择一个连接，避免重复加载。
 
-Generated Codex and Claude plugin descriptions reuse the selected runtime's `.codex-plugin/plugin.json` discovery description, and Codex also retains its short description. Older runtimes without that manifest retain the generic adapter description, while an invalid manifest (a non-object manifest or interface, or an empty/non-string `description` or `interface.shortDescription`) is rejected with a clear error before any adapter is written. The five Skills carry their own intent descriptions across plugin and npm installation paths. Regenerate adapters after updating this metadata and refresh the host's discovery as described in [installation and recovery](npm-installation.md#missing-mcp-tools-or-a-failed-connection).
+Generated Codex and Claude plugin descriptions reuse the selected runtime's `.codex-plugin/plugin.json` discovery description, and Codex also retains its short description. Older runtimes without that manifest retain the generic adapter description, while an invalid manifest (a non-object manifest or interface, or an empty/non-string `description` or `interface.shortDescription`) is rejected with a clear error before any adapter is written. The four domain Skills carry their own intent descriptions across plugin and npm installation paths. Regenerate adapters after updating this metadata and refresh the host's discovery as described in [installation and recovery](npm-installation.md#missing-mcp-tools-or-a-failed-connection).
 
 Codex plugin icons are configured by `interface.logo`, `logoDark`, `composerIcon` and `composerIconDark` in `.codex-plugin/plugin.json`. Generated Codex adapters preserve the runtime interface and include its square brand symbols under `docs/readme/`. Direct MCP connections, including npm setup, receive the same light/dark symbols as embedded `serverInfo.icons` when negotiating protocol `2025-11-25`; older protocol responses omit icons. Icon rendering and placement depend on the host. Updating source metadata does not refresh an already installed plugin or an existing MCP connection.
 
