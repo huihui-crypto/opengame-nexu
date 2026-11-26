@@ -1135,7 +1135,13 @@
     "Submit": "提交",
     "Top up credits": "去充值",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "你的 OpenDesign 余额不足，无法继续生成素材。充值后我会为你自动继续。",
-    "Balance topped up — please continue.": "余额已充值，请继续。"
+    "Balance topped up — please continue.": "余额已充值，请继续。",
+    "Make your next AAA hit.": "制作你的下一款 3A 大作",
+    "AAA game": "3A 大作",
+    "Game type": "游戏类型",
+    "Money-making game": "赚钱游戏",
+    "Indie game": "独立游戏",
+    "Make the indie game only you could make.": "做一款你的独立游戏"
   },
   "ja": {
     "Play again": "もう一度遊ぶ",
@@ -2273,7 +2279,13 @@
     "Submit": "送信",
     "Top up credits": "クレジットをチャージ",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "OpenDesign の残高不足のためメディアを生成できません。チャージすると自動で再開します。",
-    "Balance topped up — please continue.": "残高をチャージしました。続けてください。"
+    "Balance topped up — please continue.": "残高をチャージしました。続けてください。",
+    "Make your next AAA hit.": "次の AAA ヒット作を作ろう",
+    "AAA game": "AAA 大作",
+    "Game type": "ゲームの種類",
+    "Money-making game": "稼げるゲーム",
+    "Indie game": "インディーゲーム",
+    "Make the indie game only you could make.": "あなたにしか作れないインディーゲームを"
   },
   "ko": {
     "Play again": "다시 플레이",
@@ -3411,7 +3423,13 @@
     "Submit": "제출",
     "Top up credits": "크레딧 충전",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "OpenDesign 잔액이 부족해 미디어를 생성할 수 없습니다. 충전하면 자동으로 계속 진행합니다.",
-    "Balance topped up — please continue.": "잔액을 충전했어요. 계속해 주세요."
+    "Balance topped up — please continue.": "잔액을 충전했어요. 계속해 주세요.",
+    "Make your next AAA hit.": "다음 AAA 히트작을 만드세요",
+    "AAA game": "AAA 대작",
+    "Game type": "게임 유형",
+    "Money-making game": "돈 버는 게임",
+    "Indie game": "인디 게임",
+    "Make the indie game only you could make.": "당신만 만들 수 있는 인디 게임을 만드세요"
   },
   "de": {
     "Play again": "Erneut spielen",
@@ -4552,7 +4570,13 @@
     "Submit": "Senden",
     "Top up credits": "Guthaben aufladen",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Dein OpenDesign-Guthaben reicht für die Medienerzeugung nicht aus. Lade Guthaben auf, dann mache ich automatisch weiter.",
-    "Balance topped up — please continue.": "Guthaben aufgeladen — bitte fortfahren."
+    "Balance topped up — please continue.": "Guthaben aufgeladen — bitte fortfahren.",
+    "Make your next AAA hit.": "Erschaffe deinen nächsten AAA-Hit.",
+    "AAA game": "AAA-Spiel",
+    "Game type": "Spieltyp",
+    "Money-making game": "Spiel zum Geldverdienen",
+    "Indie game": "Indie-Spiel",
+    "Make the indie game only you could make.": "Erschaffe das Indie-Spiel, das nur du machen kannst."
   },
   "fr": {
     "Play again": "Rejouer",
@@ -5693,7 +5717,13 @@
     "Submit": "Envoyer",
     "Top up credits": "Recharger des crédits",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Votre solde OpenDesign est insuffisant pour générer des médias. Rechargez vos crédits et je reprendrai automatiquement.",
-    "Balance topped up — please continue.": "Solde rechargé — veuillez continuer."
+    "Balance topped up — please continue.": "Solde rechargé — veuillez continuer.",
+    "Make your next AAA hit.": "Créez votre prochain hit AAA.",
+    "AAA game": "Jeu AAA",
+    "Game type": "Type de jeu",
+    "Money-making game": "Jeu qui rapporte",
+    "Indie game": "Jeu indé",
+    "Make the indie game only you could make.": "Créez le jeu indé que vous seul pouviez faire."
   },
   "ru": {
     "Play again": "Сыграть ещё",
@@ -6836,7 +6866,13 @@
     "Submit": "Отправить",
     "Top up credits": "Пополнить баланс",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "На балансе OpenDesign недостаточно средств для генерации медиа. Пополните баланс, и я автоматически продолжу.",
-    "Balance topped up — please continue.": "Баланс пополнен — продолжайте."
+    "Balance topped up — please continue.": "Баланс пополнен — продолжайте.",
+    "Make your next AAA hit.": "Создайте свой следующий AAA-хит.",
+    "AAA game": "AAA-игра",
+    "Game type": "Тип игры",
+    "Money-making game": "Игра для заработка",
+    "Indie game": "Инди-игра",
+    "Make the indie game only you could make.": "Создайте инди-игру, которую можете сделать только вы."
   },
   "es": {
     "Play again": "Volver a jugar",
@@ -7977,7 +8013,13 @@
     "Submit": "Enviar",
     "Top up credits": "Recargar créditos",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Tu saldo de OpenDesign es insuficiente para generar medios. Recarga tus créditos y continuaré automáticamente.",
-    "Balance topped up — please continue.": "Saldo recargado — continúa, por favor."
+    "Balance topped up — please continue.": "Saldo recargado — continúa, por favor.",
+    "Make your next AAA hit.": "Crea tu próximo éxito AAA.",
+    "AAA game": "Juego AAA",
+    "Game type": "Tipo de juego",
+    "Money-making game": "Juego para ganar dinero",
+    "Indie game": "Juego indie",
+    "Make the indie game only you could make.": "Crea el juego indie que solo tú podrías hacer."
   },
   "pt-BR": {
     "Play again": "Jogar novamente",
@@ -9118,7 +9160,13 @@
     "Submit": "Enviar",
     "Top up credits": "Recarregar créditos",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Seu saldo OpenDesign é insuficiente para gerar mídia. Recarregue seus créditos e eu continuarei automaticamente.",
-    "Balance topped up — please continue.": "Saldo recarregado — continue, por favor."
+    "Balance topped up — please continue.": "Saldo recarregado — continue, por favor.",
+    "Make your next AAA hit.": "Crie seu próximo sucesso AAA.",
+    "AAA game": "Jogo AAA",
+    "Game type": "Tipo de jogo",
+    "Money-making game": "Jogo para ganhar dinheiro",
+    "Indie game": "Jogo indie",
+    "Make the indie game only you could make.": "Crie o jogo indie que só você poderia fazer."
   },
   "it": {
     "Play again": "Gioca ancora",
@@ -10259,7 +10307,13 @@
     "Submit": "Invia",
     "Top up credits": "Ricarica crediti",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Il tuo saldo OpenDesign è troppo basso per generare media. Ricarica i crediti e continuerò automaticamente.",
-    "Balance topped up — please continue.": "Saldo ricaricato — continua."
+    "Balance topped up — please continue.": "Saldo ricaricato — continua.",
+    "Make your next AAA hit.": "Crea il tuo prossimo successo AAA.",
+    "AAA game": "Gioco AAA",
+    "Game type": "Tipo di gioco",
+    "Money-making game": "Gioco per guadagnare",
+    "Indie game": "Gioco indie",
+    "Make the indie game only you could make.": "Crea il gioco indie che solo tu potevi fare."
   },
   "tr": {
     "Play again": "Tekrar oyna",
@@ -11397,6 +11451,12 @@
     "Submit": "Gönder",
     "Top up credits": "Kredi yükle",
     "Your OpenDesign balance is too low to generate media. Top up your credits and I'll continue automatically.": "Medya oluşturmak için OpenDesign bakiyeniz yetersiz. Kredi yüklediğinizde otomatik olarak devam edeceğim.",
-    "Balance topped up — please continue.": "Bakiye yüklendi — lütfen devam edin."
+    "Balance topped up — please continue.": "Bakiye yüklendi — lütfen devam edin.",
+    "Make your next AAA hit.": "Bir sonraki AAA hitini yap.",
+    "AAA game": "AAA oyun",
+    "Game type": "Oyun türü",
+    "Money-making game": "Para kazandıran oyun",
+    "Indie game": "Bağımsız oyun",
+    "Make the indie game only you could make.": "Yalnızca senin yapabileceğin bağımsız oyunu yap."
   }
 }

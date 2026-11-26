@@ -1210,6 +1210,7 @@ export function ModeComposerTopBar({
   options,
   attachments,
   disabled,
+  showPlayableAdSwitch = true,
   onChange,
   onCatalogModelsChange,
   onCatalogChange,
@@ -1221,6 +1222,8 @@ export function ModeComposerTopBar({
   options: ModeComposerOptions;
   attachments?: SuperAgentResourceAttachment[];
   disabled?: boolean;
+  /** False while the Game Studio hero, which owns the money-making game switch, is on screen. */
+  showPlayableAdSwitch?: boolean;
   onChange: (patch: Partial<ModeComposerOptions>) => void;
   onCatalogModelsChange?: (models: Model[]) => void;
   onCatalogChange?: (catalog: { models: Model[]; routes: GatewayStatus['routes']; providers?: GatewayStatus['providers'] }) => void;
@@ -3476,7 +3479,6 @@ export function ModeComposerTopBar({
       );
     };
 
-    const playableAd = isPlayableAd(options);
     return (
       <div className="om-sa-composer-top-bar" role="group" aria-label={t('Game studio options')}>
         {renderGameArtPicker({
@@ -3622,19 +3624,21 @@ export function ModeComposerTopBar({
             </div>
           </div>
         </Popover>
-        {canChoosePlayableAd(options) && (
+        {/* On a new task the Game Studio hero picks the money-making game option; this switch only
+            shows where the hero is not on screen, such as a conversation already under way. */}
+        {showPlayableAdSwitch && canChoosePlayableAd(options) && (
           <Tooltip
             label={t('Create an instantly playable portrait game with “Play again” and “Go to store” buttons added automatically.')}
             preview={<PlayableAdPreview />}
           >
             <label
               className="om-sa-composer-top-pill cursor-pointer"
-              data-active={playableAd || undefined}
+              data-active={isPlayableAd(options) || undefined}
             >
-              <span>{t('Ad-revenue game')}</span>
+              <span>{t('Money-making game')}</span>
               <Toggle
-                label={t('Ad-revenue game')}
-                checked={playableAd}
+                label={t('Money-making game')}
+                checked={isPlayableAd(options)}
                 disabled={disabled}
                 onCommit={enabled => onChange({ gamePlayableAd: enabled })}
               />

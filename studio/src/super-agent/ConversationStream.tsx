@@ -2110,6 +2110,8 @@ export function ConversationStream({
             options={modeOptions}
             attachments={attachments}
             disabled={sending || hasPendingApproval}
+            // The Game Studio hero owns the money-making game switch while it is on screen.
+            showPlayableAdSwitch={!(activeMode.id === 'game' && !chat?.messages.length && !pendingSubmission && !publishEntries.length)}
             onChange={changeLandingOptions}
             onCatalogChange={handleCatalogChange}
             onOpenResourcePicker={category => {

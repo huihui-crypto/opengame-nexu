@@ -2743,8 +2743,9 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
     const adTab = [...filters.querySelectorAll<HTMLButtonElement>('button')]
       .find(tab => tab.textContent?.startsWith('Playable ad'))!;
     const selectedShortcuts = () => container.querySelectorAll('.om-sa-game-genre-card[aria-pressed="true"]');
-    const adSwitch = topBar.querySelector<HTMLElement>('[role="switch"][aria-label="Ad-revenue game"]')!;
-    const adSwitchLabel = adSwitch.closest('label')!;
+    // The money-making game option is picked in the hero switch, not the composer toolbar.
+    expect(topBar.querySelector('[role="switch"]')).toBeNull();
+    const [adSwitch, aaaSwitch] = Array.from(container.querySelectorAll<HTMLButtonElement>('.om-sa-game-mode-option'));
     expect(adSwitch.getAttribute('aria-checked')).toBe('true');
     await act(async () => adTab.click());
     expect([...selectedShortcuts()]).toEqual([shooterBadge]);
@@ -2822,14 +2823,14 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
     expect(topBar.textContent).toContain('Screen layout');
     expect(orientationTrigger.hasAttribute('data-active')).toBe(false);
 
-    // The composer toggle changes the creation layout independently of template filtering.
-    await act(async () => adSwitchLabel.click());
+    // The hero switch turns the money-making game option on and off.
+    await act(async () => adSwitch.click());
     await flush();
     expect(topBar.textContent).toContain('Portrait');
     expect(orientationTrigger.hasAttribute('data-active')).toBe(true);
     expect(adSwitch.getAttribute('aria-checked')).toBe('true');
     expect(gameTab.getAttribute('aria-selected')).toBe('true');
-    await act(async () => adSwitchLabel.click());
+    await act(async () => aaaSwitch.click());
     await flush();
     expect(topBar.textContent).toContain('Screen layout');
     expect(orientationTrigger.hasAttribute('data-active')).toBe(false);
@@ -2838,7 +2839,7 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
     await typeInComposer(composer, 'Pixel shooter in space', { clear: true });
     await act(async () => shooterBadge.click());
     expect(composer.textContent).toBe('Pixel shooter in space');
-    await act(async () => adSwitchLabel.click());
+    await act(async () => adSwitch.click());
     await act(async () => adTab.click());
     expect(adSwitch.getAttribute('aria-checked')).toBe('true');
     expect(topBar.textContent).toContain('Portrait');
@@ -3572,8 +3573,8 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
 
   // Auto-switched into Game mode with fanned hero, search input, sort combobox, and masonry waterfall
   expect(container.querySelector('.om-sa-stream')?.getAttribute('data-mode')).toBe('game');
-  expect(container.querySelectorAll('.om-sa-game-fan-card').length).toBeGreaterThan(0);
-  expect(container.querySelectorAll('.om-sa-game-fan-actions .om-sa-game-tile-remix').length).toBe(1);
+  expect(container.querySelectorAll('.om-sa-game-float-item img').length).toBeGreaterThan(0);
+  expect(container.querySelector('.om-sa-game-float')?.getAttribute('aria-hidden')).toBe('true');
   expect(container.querySelector('.om-sa-game-search input')).toBeTruthy();
   expect(container.querySelector('.om-sa-game-sort [role="combobox"]')).toBeTruthy();
   const landscapeCover = container.querySelector<HTMLElement>('.om-sa-game-tile[data-orientation="landscape"] .om-sa-game-tile-cover');
@@ -3619,27 +3620,29 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   expect(container.querySelector('.om-sa-composer-chips')).toBeNull();
   expect(gameInput.textContent).toBe('');
 
-  // Top fanned Hero carousel rotates smoothly via Next/Previous controls and side-card clicks
-  const initialCenterLabel = container.querySelector('.om-sa-game-fan-item[data-slot="0"] .om-sa-game-fan-card')?.getAttribute('aria-label');
-  const nextFanBtn = container.querySelector('.om-sa-game-fan-nav[data-side="next"]') as HTMLButtonElement;
-  expect(nextFanBtn).toBeTruthy();
-  await act(async () => nextFanBtn.click());
+  // The hero switch moves to the AAA headline and display cards, then back
+  const [moneyKey, epicKey] = Array.from(container.querySelectorAll<HTMLButtonElement>('.om-sa-game-mode-option'));
+  expect(moneyKey.getAttribute('aria-checked')).toBe('true');
+  await act(async () => epicKey.click());
   await flush();
-  const nextCenterLabel = container.querySelector('.om-sa-game-fan-item[data-slot="0"] .om-sa-game-fan-card')?.getAttribute('aria-label');
-  expect(nextCenterLabel).not.toBe(initialCenterLabel);
-
-  // Clicking the center Hero card's Remix button selects it into the Agent composer, then clicking again deselects it
-  const fanRemixBtn = container.querySelector('.om-sa-game-fan-item[data-slot="0"] .om-sa-game-tile-remix') as HTMLButtonElement;
-  expect(fanRemixBtn).toBeTruthy();
-  await act(async () => fanRemixBtn.click());
+  expect(epicKey.getAttribute('aria-checked')).toBe('true');
+  expect(container.querySelector('.om-sa-game-float')?.getAttribute('data-theme')).toBe('epic');
+  expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Make the indie game only you could make.');
+  await act(async () => moneyKey.click());
   await flush();
-  expect(container.querySelector('.om-sa-composer-chips')?.textContent).toContain('Remix ·');
-  await act(async () => fanRemixBtn.click());
-  await flush();
-  expect(container.querySelector('.om-sa-composer-chips')).toBeNull();
+  expect(container.querySelector('.om-sa-mode-hero-copy h2')?.textContent).toBe('Build games. Turn play into pay.');
 
   // Selecting a gallery template fills an editable draft and preserves user edits across toggles.
+  // The list follows the hero mode and pages its results: switch to the AAA batch and search for this community racer.
+  await act(async () => epicKey.click());
+  await flush();
   const racingGame = communityGames.find(game => game.id === 'community-turbo-kart')!;
+  const searchInput = container.querySelector<HTMLInputElement>('.om-sa-game-search input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(searchInput, racingGame.title);
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await flush();
   const racingRemixBtn = container.querySelector<HTMLButtonElement>(`.om-sa-game-tile-remix[aria-label="Remix: ${racingGame.title}"]`)!;
   await act(async () => racingRemixBtn.click());
   expect(gameInput.textContent).toBe(`Make a game based on ${racingGame.title}.`);
@@ -3654,6 +3657,13 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   // Selecting another template when user has already typed preserves their prompt text untouched
   await act(async () => racingRemixBtn.click());
   expect(gameInput.textContent).toBe('Make the race three laps.');
+
+  // Clear the search so the rest of the AAA batch shows again.
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(searchInput, '');
+    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await flush();
 
   // Clicking a masonry card cover opens it directly in the viewer (with preconnect on focus)
   const evensong = communityGames.find(game => game.id === 'community-evensong')!;
@@ -3690,26 +3700,7 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   await act(async () => reload.click());
   expect(gameFrame()).not.toBe(originalFrame);
 
-  const sideCards = [...container.querySelectorAll<HTMLButtonElement>(
-    '.om-sa-game-fan-item:is([data-slot="-1"], [data-slot="1"]) .om-sa-game-fan-card',
-  )];
-  const sideGame = communityGames.find(game =>
-    !container.querySelector(`iframe[title="${game.title}"]`) &&
-    sideCards.some(button => button.getAttribute('aria-label') === game.title),
-  )!;
-  const sideBanner = sideCards.find(button => button.getAttribute('aria-label') === sideGame.title)!;
-  const sideFrame = () => container.querySelector<HTMLIFrameElement>(`iframe[title="${sideGame.title}"]`);
-  expect(sideBanner.querySelector('.om-sa-showcase-action-cue')).toBeNull();
-  await act(async () => sideBanner.click());
-  expect(sideBanner.closest('.om-sa-game-fan-item')?.getAttribute('data-slot')).toBe('0');
-  expect(sideFrame()).toBeNull();
-  expect(sideBanner.querySelector('.om-sa-showcase-action-cue')?.textContent).toBe('Try game');
-  await act(async () => sideBanner.click());
-  const bannerFrame = sideFrame();
-  expect(bannerFrame?.getAttribute('src')).toBe(sideGame.external!.url);
-  const sideGrid = container.querySelector<HTMLButtonElement>(`.om-sa-game-tile-cover[aria-label="Try game: ${sideGame.title}"]`)!;
-  await act(async () => sideGrid.click());
-  expect(sideFrame()).toBe(bannerFrame);
+  // Hero cards are display-only; games are opened from the template list.
 
   const search = container.querySelector<HTMLInputElement>('.om-sa-game-search input')!;
   await act(async () => {
@@ -4104,7 +4095,7 @@ it('consumes Cloud deploy requests across viewer remounts and aborts deploy when
   await flush();
   await flush();
 
-  const deployBtn = container.querySelector('.om-sa-game-fan-actions .om-sa-game-tile-deploy') as HTMLButtonElement;
+  const deployBtn = container.querySelector('.om-sa-game-tile .om-sa-game-tile-deploy') as HTMLButtonElement;
   expect(deployBtn).toBeTruthy();
   await act(async () => deployBtn.click());
   await flush();
