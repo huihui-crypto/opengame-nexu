@@ -12135,9 +12135,11 @@
   --hero-a: var(--motion-game-hero-coin);
   --hero-b: var(--motion-game-hero-orange);
   --hero-sweep: var(--motion-game-hero-coin-glow);
+  /* Height of the genre figures at the bottom of the hero; the art background stops above them. */
+  --hero-figures: 150px;
   isolation: isolate;
-  /* The switch and headline sit below the top row of cards; the genre strip closes the hero right
-     above the composer, so strip, toolbar and input read as one group. */
+  /* The switch and headline sit below the top row of cards; the genre figures close the hero right
+     on top of the composer, so figures, toolbar and input read as one group. */
   justify-content: flex-start;
   gap: var(--motion-space-18);
   overflow: hidden;
@@ -12150,18 +12152,22 @@
   --hero-sweep: var(--motion-game-hero-ink);
 }
 
-/* Overrides the game stream's hero padding: room for the top row of cards above the switch. */
+/* Overrides the game stream's hero padding: room for the top row of cards above the switch. The
+   negative bottom margin tucks the genre figures panel under the composer's top edge. */
 .om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) {
-  padding-block: 168px var(--motion-space-4);
+  padding-block: 210px 0;
+  margin-bottom: -40px;
 }
 
 /* Drifting aurora behind everything. */
 .om-sa-mode-hero:has(.om-sa-game-stage)::before {
   content: '';
   position: absolute;
-  inset: -20%;
+  inset: -20% -20% var(--hero-figures);
   z-index: -2;
   pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent);
+  mask-image: linear-gradient(to bottom, black 70%, transparent);
   background:
     radial-gradient(28% 32% at 38% 42%, color-mix(in srgb, var(--hero-a) 26%, transparent), transparent 70%),
     radial-gradient(26% 30% at 62% 40%, color-mix(in srgb, var(--hero-b) 26%, transparent), transparent 70%),
@@ -12174,8 +12180,8 @@
 .om-sa-mode-hero:has(.om-sa-game-stage)::after {
   content: '';
   position: absolute;
-  inset: auto -30% -10%;
-  height: 55%;
+  inset: auto -30% var(--hero-figures);
+  height: 45%;
   z-index: -1;
   pointer-events: none;
   background:
@@ -12201,30 +12207,101 @@
 
 .om-sa-game-stage { display: contents; }
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-mode-hero-copy { order: 1; z-index: 1; max-width: 62%; }
-/* The genre strip is one row of compact pills at the bottom of the hero, next to the composer. */
+/* Genre figures: a row of character art on a panel that tucks under the composer's top edge. */
 .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip {
   order: 3;
   z-index: 1;
-  margin-top: var(--motion-space-28);
-  display: flex;
-  justify-content: center;
-  gap: var(--motion-space-8);
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--motion-space-4);
+  width: min(100% - 64px, 716px);
   max-width: none;
+  margin-top: var(--motion-space-28);
+  padding: var(--motion-space-6) var(--motion-space-16) 14px;
+  border-radius: var(--motion-radius-xl) var(--motion-radius-xl) 0 0;
+  background: var(--motion-inset);
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card {
-  flex-direction: row;
-  gap: var(--motion-space-6);
-  padding: 4px 12px 4px 4px;
-  border-radius: var(--motion-radius-full);
-  background: color-mix(in srgb, var(--motion-panel) 80%, transparent);
-  white-space: nowrap;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--motion-muted);
+  font-size: var(--motion-text-md);
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card:is(:hover, [data-active]) {
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+  color: var(--motion-text);
 }
 
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-art {
-  width: 26px;
-  max-width: 26px;
+  width: 100%;
+  max-width: 104px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-mask-image: linear-gradient(black 70%, transparent);
+  mask-image: linear-gradient(black 70%, transparent);
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-art img {
+  object-fit: contain;
+  filter: grayscale(0.35) brightness(0.62);
+  transform: translateY(6px);
+  transition: filter 200ms ease, transform 200ms ease;
+}
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card:hover .om-sa-game-genre-art { transform: none; }
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card:hover .om-sa-game-genre-art img { filter: none; transform: translateY(2px); }
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] .om-sa-game-genre-art { outline: none; }
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card[data-active] .om-sa-game-genre-art img { filter: none; transform: scale(1.06); }
+
+.om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-game-genre-card > span:last-child {
+  position: absolute;
+  inset-inline: 0;
+  bottom: var(--motion-space-16);
+  text-align: center;
+  text-shadow: 0 1px 6px var(--motion-bg);
+}
+
+/* Game Studio options sit inside the composer's toolbar. */
+.om-sa-composer-tools .om-sa-composer-top-bar {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  gap: var(--motion-space-6);
+}
+
+.om-sa-game-genre-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--motion-space-6);
+  height: 30px;
+  padding: 0 var(--motion-space-4) 0 var(--motion-space-4);
   border-radius: var(--motion-radius-full);
+  background: var(--motion-inset);
+  color: var(--motion-text);
+  font-size: var(--motion-text-sm);
+}
+
+/* The agent that will build the game stands out at the end of the toolbar. */
+.om-sa-stream[data-mode='game'] .om-sa-composer-tools > .om-sa-model-trigger,
+.om-sa-stream[data-mode='game'] .om-sa-composer-tools .om-sa-model-trigger:not(.om-sa-mode-param-trigger) {
+  margin-inline-start: auto;
+  height: 34px;
+  padding-inline: var(--motion-space-6) var(--motion-space-12);
+  border: 1px solid color-mix(in srgb, var(--motion-accent) 55%, transparent);
+  border-radius: var(--motion-radius-full);
+  background: color-mix(in srgb, var(--motion-accent) 12%, var(--motion-panel));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--motion-accent) 18%, transparent);
+  font-weight: var(--motion-weight-semibold);
 }
 
 /* Mode switch above the headline: no outline; the active side is a glowing gradient pill with a light sweep. */
@@ -12319,7 +12396,7 @@
 
 /* Large headline with a light sweep across the letters. */
 .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 {
-  font-size: clamp(30px, 3.2vw, 50px);
+  font-size: clamp(32px, 3.8vw, 58px);
   white-space: nowrap;
   font-weight: var(--motion-weight-bold);
   letter-spacing: -0.035em;
@@ -12367,7 +12444,7 @@
 /* Floating display cards around the headline, at different depths. */
 .om-sa-game-float {
   position: absolute;
-  inset: var(--motion-space-12) 0 84px;
+  inset: var(--motion-space-12) 0 calc(var(--hero-figures) + 96px);
   z-index: 0;
   pointer-events: none;
   transform-style: preserve-3d;
@@ -12384,14 +12461,14 @@
     om-sa-float-bob 6s ease-in-out calc(var(--float-delay) + 820ms) infinite alternate;
 }
 
-.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: 149px; --float-tilt: -6deg; }
-.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: 83px; --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: 141px; --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: 83px; --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
-.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: 156px; --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
-.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: 83px; --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
+.om-sa-game-float-item[data-slot="0"] { top: 0; left: 1%; width: 179px; --float-tilt: -6deg; }
+.om-sa-game-float-item[data-slot="1"] { top: 3%; left: 20%; width: 100px; --float-tilt: 4deg; --float-delay: 80ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="2"] { top: 52%; left: 1%; width: 169px; --float-tilt: -2deg; --float-delay: 160ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="3"] { top: 3%; right: 20%; width: 100px; --float-tilt: -4deg; --float-delay: 40ms; --depth: 10; }
+.om-sa-game-float-item[data-slot="4"] { top: 0; right: 1%; width: 187px; --float-tilt: 5deg; --float-delay: 120ms; --depth: 34; }
+.om-sa-game-float-item[data-slot="5"] { top: 52%; right: 2%; width: 100px; --float-tilt: 3deg; --float-delay: 200ms; --depth: 22; }
 /* Centerpiece above the switch: the largest, nearest card. */
-.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: 200px; margin-left: -100px; z-index: 1; --float-delay: 0ms; --depth: 40; }
+.om-sa-game-float-item[data-slot="6"] { top: -2%; left: 50%; width: 240px; margin-left: -120px; z-index: 1; --float-delay: 0ms; --depth: 40; }
 
 /* Farther cards are slightly dimmer; no blur, so their art stays sharp. */
 .om-sa-game-float-item[data-slot="1"],
@@ -12399,8 +12476,8 @@
 .om-sa-game-float-item[data-slot="5"] { filter: brightness(0.9); }
 
 /* Money-making games are portrait, so every card is portrait in that mode. */
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: 85px; }
-.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: 99px; }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:not([data-slot="6"]) { width: 102px; }
+.om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="4"]) { width: 119px; }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="0"], [data-slot="2"]) { left: 3%; }
 .om-sa-game-float[data-theme='money'] .om-sa-game-float-item:is([data-slot="4"], [data-slot="5"]) { right: 3%; }
 
@@ -12501,7 +12578,7 @@
 @media (max-width: 820px) {
   .om-sa-game-float { display: none; }
   .om-sa-stream[data-mode='game'] .om-sa-mode-hero:has(.om-sa-game-stage) { padding-top: var(--motion-space-24); }
-  .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip { margin-top: 0; }
+  .om-sa-mode-hero:has(.om-sa-game-stage) > .om-sa-game-genre-strip { margin-top: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .om-sa-mode-hero:has(.om-sa-game-stage) .om-sa-mode-hero-copy h2 { white-space: normal; }
 }
 

@@ -1141,7 +1141,8 @@
     "Game type": "游戏类型",
     "Money-making game": "赚钱游戏",
     "Indie game": "独立游戏",
-    "Make the indie game only you could make.": "做一款你的独立游戏"
+    "Make the indie game only you could make.": "做一款你的独立游戏",
+    "Remove genre": "移除类型"
   },
   "ja": {
     "Play again": "もう一度遊ぶ",
@@ -2285,7 +2286,8 @@
     "Game type": "ゲームの種類",
     "Money-making game": "稼げるゲーム",
     "Indie game": "インディーゲーム",
-    "Make the indie game only you could make.": "あなたにしか作れないインディーゲームを"
+    "Make the indie game only you could make.": "あなたにしか作れないインディーゲームを",
+    "Remove genre": "ジャンルを外す"
   },
   "ko": {
     "Play again": "다시 플레이",
@@ -3429,7 +3431,8 @@
     "Game type": "게임 유형",
     "Money-making game": "돈 버는 게임",
     "Indie game": "인디 게임",
-    "Make the indie game only you could make.": "당신만 만들 수 있는 인디 게임을 만드세요"
+    "Make the indie game only you could make.": "당신만 만들 수 있는 인디 게임을 만드세요",
+    "Remove genre": "장르 제거"
   },
   "de": {
     "Play again": "Erneut spielen",
@@ -4576,7 +4579,8 @@
     "Game type": "Spieltyp",
     "Money-making game": "Spiel zum Geldverdienen",
     "Indie game": "Indie-Spiel",
-    "Make the indie game only you could make.": "Erschaffe das Indie-Spiel, das nur du machen kannst."
+    "Make the indie game only you could make.": "Erschaffe das Indie-Spiel, das nur du machen kannst.",
+    "Remove genre": "Genre entfernen"
   },
   "fr": {
     "Play again": "Rejouer",
@@ -5723,7 +5727,8 @@
     "Game type": "Type de jeu",
     "Money-making game": "Jeu qui rapporte",
     "Indie game": "Jeu indé",
-    "Make the indie game only you could make.": "Créez le jeu indé que vous seul pouviez faire."
+    "Make the indie game only you could make.": "Créez le jeu indé que vous seul pouviez faire.",
+    "Remove genre": "Retirer le genre"
   },
   "ru": {
     "Play again": "Сыграть ещё",
@@ -6872,7 +6877,8 @@
     "Game type": "Тип игры",
     "Money-making game": "Игра для заработка",
     "Indie game": "Инди-игра",
-    "Make the indie game only you could make.": "Создайте инди-игру, которую можете сделать только вы."
+    "Make the indie game only you could make.": "Создайте инди-игру, которую можете сделать только вы.",
+    "Remove genre": "Убрать жанр"
   },
   "es": {
     "Play again": "Volver a jugar",
@@ -8019,7 +8025,8 @@
     "Game type": "Tipo de juego",
     "Money-making game": "Juego para ganar dinero",
     "Indie game": "Juego indie",
-    "Make the indie game only you could make.": "Crea el juego indie que solo tú podrías hacer."
+    "Make the indie game only you could make.": "Crea el juego indie que solo tú podrías hacer.",
+    "Remove genre": "Quitar género"
   },
   "pt-BR": {
     "Play again": "Jogar novamente",
@@ -9166,7 +9173,8 @@
     "Game type": "Tipo de jogo",
     "Money-making game": "Jogo para ganhar dinheiro",
     "Indie game": "Jogo indie",
-    "Make the indie game only you could make.": "Crie o jogo indie que só você poderia fazer."
+    "Make the indie game only you could make.": "Crie o jogo indie que só você poderia fazer.",
+    "Remove genre": "Remover gênero"
   },
   "it": {
     "Play again": "Gioca ancora",
@@ -10313,7 +10321,8 @@
     "Game type": "Tipo di gioco",
     "Money-making game": "Gioco per guadagnare",
     "Indie game": "Gioco indie",
-    "Make the indie game only you could make.": "Crea il gioco indie che solo tu potevi fare."
+    "Make the indie game only you could make.": "Crea il gioco indie che solo tu potevi fare.",
+    "Remove genre": "Rimuovi genere"
   },
   "tr": {
     "Play again": "Tekrar oyna",
@@ -11457,6 +11466,7 @@
     "Game type": "Oyun türü",
     "Money-making game": "Para kazandıran oyun",
     "Indie game": "Bağımsız oyun",
-    "Make the indie game only you could make.": "Yalnızca senin yapabileceğin bağımsız oyunu yap."
+    "Make the indie game only you could make.": "Yalnızca senin yapabileceğin bağımsız oyunu yap.",
+    "Remove genre": "Türü kaldır"
   }
 }

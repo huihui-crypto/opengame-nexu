@@ -1,4 +1,5 @@
 import { Button } from 'open-design-ui/button';
+import { IconButton } from 'open-design-ui/icon-button';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   designScenarios,
@@ -3479,9 +3480,28 @@ export function ModeComposerTopBar({
       );
     };
 
+    // While the Game Studio hero is on screen its genre figures pick the genre, so the composer only
+    // shows the picked genre as a removable chip.
+    const heroPicksGenre = !showPlayableAdSwitch;
     return (
-      <div className="om-sa-composer-top-bar" role="group" aria-label={t('Game studio options')}>
-        {renderGameArtPicker({
+      <div className="om-sa-composer-top-bar" role="group" aria-label={t('Game studio options')} data-hero={heroPicksGenre || undefined}>
+        {heroPicksGenre ? (
+          options.gameGenre && (
+            <span className="om-sa-game-genre-chip">
+              {genreCovers[options.gameGenre] && <img className="om-sa-game-pill-thumb" src={genreCovers[options.gameGenre]!} alt="" />}
+              <span>{t(genreLabels[options.gameGenre])}</span>
+              <IconButton
+                variant="plain"
+                type="button"
+                className="om-sa-chip-remove"
+                aria-label={t('Remove genre')}
+                disabled={disabled}
+                onClick={() => onChange({ gameGenre: null })}
+                icon={<RemixIcon name="close-line" size={12} />}
+              />
+            </span>
+          )
+        ) : renderGameArtPicker({
           menuKey: 'game-genre',
           fallbackIcon: 'gamepad-line',
           label: 'Genre',

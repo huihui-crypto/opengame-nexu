@@ -2733,9 +2733,10 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
       await new Promise(resolve => requestAnimationFrame(() => resolve(undefined)));
     });
     expect(shooterBadge.getAttribute('aria-pressed')).toBe('true');
-    expect(filters.querySelector('[aria-selected="true"]')?.textContent).toContain('Shooter');
-    expect(topBar.textContent).toContain('Shooter');
-    expect(scrollToSpy).toHaveBeenCalledWith({ top: 164, behavior: 'smooth' });
+    // Picking a genre figure only sets the brief's genre: the template list and scroll position stay put.
+    expect(filters.querySelector('[aria-selected="true"]')?.textContent).toContain('All games');
+    expect(scrollToSpy).not.toHaveBeenCalled();
+    expect(topBar.querySelector('.om-sa-game-genre-chip')?.textContent).toContain('Shooter');
     expect(composerSlot.dataset.position).toBe('inline');
     expect(composer.textContent).toBe('A wave shooter where you defend a space station');
     expect(composer.getAttribute('data-placeholder')).toBe('Describe the game you want to make');
@@ -2752,27 +2753,24 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
     expect(filters.querySelector('[aria-selected="true"]')?.textContent).toContain('Playable ad');
     expect(container.querySelectorAll('.om-sa-game-showcase-card[data-orientation="landscape"]')).toHaveLength(0);
     expect(topBar.textContent).toContain('Screen layout');
-    expect(topBar.textContent).toContain('Shooter');
+    expect(topBar.querySelector('.om-sa-game-genre-chip button[aria-label="Remove genre"]')).toBeTruthy();
     expect(adSwitch.getAttribute('aria-checked')).toBe('true');
-    expect(composer.textContent).toBe('A wave shooter where you defend a space station');
-    await act(async () => shooterBadge.click());
-    expect([...selectedShortcuts()]).toEqual([shooterBadge]);
-    expect(topBar.textContent).toContain('Screen layout');
 
-    const racingTab = [...filters.querySelectorAll<HTMLButtonElement>('button')]
-      .find(tab => tab.textContent?.includes('Racing'))!;
-    await act(async () => racingTab.click());
-    expect(racingTab.getAttribute('aria-selected')).toBe('true');
-    expect(topBar.textContent).toContain('Shooter');
+    // The chip's remove button clears the genre; clicking a picked figure again clears it too.
+    await act(async () => topBar.querySelector<HTMLButtonElement>('.om-sa-game-genre-chip button[aria-label="Remove genre"]')!.click());
+    expect([...selectedShortcuts()]).toEqual([]);
+    expect(topBar.querySelector('.om-sa-game-genre-chip')).toBeNull();
     await act(async () => shooterBadge.click());
-    expect(filters.querySelector('[aria-selected="true"]')?.textContent).toContain('Shooter');
+    expect(shooterBadge.getAttribute('aria-pressed')).toBe('true');
     await act(async () => shooterBadge.click());
     expect(shooterBadge.getAttribute('aria-pressed')).toBe('false');
-    expect(gameTab.getAttribute('aria-selected')).toBe('true');
+    expect(filters.querySelector('[aria-selected="true"]')?.textContent).toContain('Playable ad');
     expect(composer.textContent).toBe('');
 
     expect(topBar).toBeTruthy();
-    expect(topBar.textContent).toContain('Genre');
+    // The hero's genre figures pick the genre; the composer toolbar only shows a picked genre as a chip.
+    expect(topBar.closest('.om-sa-composer')).toBeTruthy();
+    expect(topBar.querySelector('.om-sa-game-genre-chip')).toBeNull();
     expect(topBar.textContent).not.toContain('Shooter');
     expect(topBar.textContent).toContain('Art style');
     expect(topBar.textContent).toContain('Setting');
@@ -2829,7 +2827,8 @@ it('keeps multiplayer games playable in the catalog and only scaffolds single-pl
     expect(topBar.textContent).toContain('Portrait');
     expect(orientationTrigger.hasAttribute('data-active')).toBe(true);
     expect(adSwitch.getAttribute('aria-checked')).toBe('true');
-    expect(gameTab.getAttribute('aria-selected')).toBe('true');
+    // Switching the hero mode leaves the template list on the tab the user picked.
+    expect(adTab.getAttribute('aria-selected')).toBe('true');
     await act(async () => aaaSwitch.click());
     await flush();
     expect(topBar.textContent).toContain('Screen layout');
@@ -3608,7 +3607,7 @@ it('auto-enters Game mode when opened from Game Studio, plays games in Artifact 
   expect(gameInput.textContent).toBe('Make a game based on The Little Prince: Star Journey.');
   expect((container.querySelector('.om-sa-send-btn') as HTMLButtonElement).disabled).toBe(false);
   const topBarAfterRemix = container.querySelector('.om-sa-composer-top-bar')!;
-  expect(topBarAfterRemix.textContent).toContain('Genre');
+  expect(topBarAfterRemix.querySelector('.om-sa-game-genre-chip')).toBeNull();
   expect(topBarAfterRemix.textContent).toContain('Art style');
   expect(topBarAfterRemix.textContent).toContain('Screen layout');
   expect(topBarAfterRemix.querySelectorAll('[data-active]').length).toBe(0);

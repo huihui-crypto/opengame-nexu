@@ -1039,21 +1039,6 @@ export function ModeResourceShowcase({
     target.scrollIntoView?.({ behavior, block: 'start' });
   };
 
-  const selectGameShortcut = (filter: string) => {
-    setActiveFilter(filter);
-    requestAnimationFrame(() => {
-      const tabs = tabsRef.current;
-      const selected = tabs?.querySelector('[aria-selected="true"]');
-      if (tabs && selected && tabs.scrollWidth > tabs.clientWidth) {
-        const strip = tabs.getBoundingClientRect();
-        const tab = selected.getBoundingClientRect();
-        const left = Math.min(0, tab.left - strip.left - 28) + Math.max(0, tab.right - strip.right + 28);
-        if (left !== 0) tabs.scrollBy?.({ left });
-      }
-      scrollToShowcase('game-title');
-    });
-  };
-
   const publishedGameTemplates = useMemo(
     () => gameCatalog.filter(g => g.source !== 'mine' && g.status === 'published'),
     [gameCatalog],
@@ -1753,8 +1738,8 @@ export function ModeResourceShowcase({
           <div className="om-sa-game-genre-strip" role="group" aria-label={t('Genre')}>
             {gameGenres.map(id => {
               const selected = modeOptions?.gameGenre === id;
-              const cover = genreHomeCovers[id];
-              const filter = `genre:${id}`;
+              // Transparent character art, so the figures stand on the panel above the composer.
+              const cover = genreCovers[id];
               return (
                 <Button
                   key={id}
@@ -1763,11 +1748,9 @@ export function ModeResourceShowcase({
                   className="om-sa-game-genre-card"
                   aria-pressed={selected}
                   data-active={selected || undefined}
-                  onClick={() => {
-                    const clear = selected && activeFilter === filter;
-                    onChangeModeOptions?.({ gameGenre: clear ? null : id });
-                    selectGameShortcut(clear ? 'all' : filter);
-                  }}
+                  // Picking a figure only sets the brief's genre, like the composer's genre chip; the
+                  // template list below and the scroll position stay where they are.
+                  onClick={() => onChangeModeOptions?.({ gameGenre: selected ? null : id })}
                 >
                   <span className="om-sa-game-genre-art" aria-hidden="true">
                     {cover ? <img src={cover} alt="" /> : <RemixIcon name="gamepad-line" size={22} />}

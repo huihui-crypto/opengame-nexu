@@ -1560,6 +1560,32 @@ export function ConversationStream({
   );
   const artifactCount = chat?.artifacts.length ?? 0;
 
+
+  // Mode options bar: above the composer for most modes, inside the composer toolbar for Game Studio.
+  const modeTopBar = activeMode ? (
+      <ModeComposerTopBar
+        active={active}
+        modeId={activeMode.id}
+        options={modeOptions}
+        attachments={attachments}
+        disabled={sending || hasPendingApproval}
+        // The Game Studio hero owns the money-making game switch while it is on screen.
+        showPlayableAdSwitch={!(activeMode.id === 'game' && !chat?.messages.length && !pendingSubmission && !publishEntries.length)}
+        onChange={changeLandingOptions}
+        onCatalogChange={handleCatalogChange}
+        onOpenResourcePicker={category => {
+          setMentionCategory(mapResourceTabToMentionCategory(category));
+          setMentionMenuSource('plus');
+          setMentionQuery('');
+          setMentionMenuOpen(true);
+        }}
+        onOpenModelSettings={() => {
+          if (onOpenModelSettings) onOpenModelSettings();
+          else onOpenAgentSettings();
+        }}
+      />
+  ) : null;
+
   return (
     <section
       className="om-sa-stream"
@@ -2104,29 +2130,8 @@ export function ConversationStream({
           </div>
         )}
 
-        {activeMode && (
-          <ModeComposerTopBar
-            active={active}
-            modeId={activeMode.id}
-            options={modeOptions}
-            attachments={attachments}
-            disabled={sending || hasPendingApproval}
-            // The Game Studio hero owns the money-making game switch while it is on screen.
-            showPlayableAdSwitch={!(activeMode.id === 'game' && !chat?.messages.length && !pendingSubmission && !publishEntries.length)}
-            onChange={changeLandingOptions}
-            onCatalogChange={handleCatalogChange}
-            onOpenResourcePicker={category => {
-              setMentionCategory(mapResourceTabToMentionCategory(category));
-              setMentionMenuSource('plus');
-              setMentionQuery('');
-              setMentionMenuOpen(true);
-            }}
-            onOpenModelSettings={() => {
-              if (onOpenModelSettings) onOpenModelSettings();
-              else onOpenAgentSettings();
-            }}
-          />
-        )}
+        {/* Game Studio options live inside the composer's toolbar (see below); other modes keep the top bar. */}
+        {activeMode && activeMode.id !== 'game' && modeTopBar}
 
         <div
           ref={composerShellRef}
@@ -2510,6 +2515,8 @@ export function ConversationStream({
                   />
                 </span>
               )}
+
+              {activeMode?.id === 'game' && modeTopBar}
 
               {activeMode && (
                 <ModeComposerControls
