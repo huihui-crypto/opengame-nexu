@@ -2,6 +2,7 @@
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { GameCard } from '../../../shared/game-contract';
 import type { SuperAgentChat, SuperAgentChatSummary, SuperAgentResourceCatalog } from '../../../shared/super-agent';
 import { NearScreenIntersectionObserver } from '../hooks/intersectionObserverTestUtils';
 import { I18nProvider } from '../i18n/I18n';
@@ -18,6 +19,7 @@ import { SimpleMarkdown } from './SimpleMarkdown';
 import { DEFAULT_MODE_COMPOSER_OPTIONS, getModeComposerPlaceholder } from './ModeComposerControls';
 import { SUPER_AGENT_MODES } from './ModeResourceShowcase';
 import { ArtifactBrowserPane } from './ArtifactBrowserPane';
+import { resetGamePublishStore } from './gamePublish/gamePublishStore';
 import { clearSuperAgentCache, peekCachedSuperAgentChat } from './superAgentClient';
 import { designClient } from '../design/designClient';
 import { setClientCacheOverrideForTest } from '../utils/clientCacheMode';
@@ -644,11 +646,14 @@ it('renders Super Agent empty home, opens Resource Picker, and applies selected 
   });
   await flush();
 
-  expect(document.body.textContent).toContain('What can I create for you?');
+  expect(document.body.textContent).toContain('What would you like to create today?');
   expect(container.querySelector('.om-sa-home-hero + .om-sa-starter-grid')).toBeTruthy();
-  expect(container.querySelector('.om-sa-stream > .om-sa-messages + .om-sa-composer-placement .om-sa-composer-editor')).toBeTruthy();
+  expect(container.querySelector('.om-sa-stream > .om-sa-stream-head')).toBeTruthy();
+  expect(container.querySelector('.om-sa-messages + .om-sa-composer-placement .om-sa-composer-editor')).toBeTruthy();
+  expect(container.querySelector('.om-sa-home canvas')).toBeNull();
+  expect(container.querySelector('.om-sa-home')?.textContent).not.toContain('My creations');
   expect([...container.querySelectorAll('.om-sa-starter-card strong')].map(node => node.textContent)).toEqual([
-    'Build a game', 'Design Studio', 'Motion graphics', 'Make a video', 'Create slides', 'Explore more',
+    'Anyone can build games that earn.', 'Design Studio', 'Make a video', 'Create slides', 'Explore more',
   ]);
 
   // No standalone Resources entry button in the stream header
@@ -2078,6 +2083,184 @@ it('enters pure Coding mode from Explore more and renders sidebar/header intent 
   expect(document.querySelector('.om-sa-stream-title-icon[data-tone="coding"]')).toBeTruthy();
 });
 
+it('dispatches existing-chat handoffs only to the matching loaded conversation', async () => {
+  clearSuperAgentCache();
+  const chat: SuperAgentChat = {
+    ...sampleChat, title: 'Publishable game', intent: 'game', state: 'running', approvals: [],
+    artifacts: [], activeArtifactId: undefined,
+  };
+  const otherChat: SuperAgentChat = {
+    ...chat, id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', title: 'Another conversation', state: 'idle',
+  };
+  const chatPath = `${SUPER_AGENT_API}/chats`;
+  const onChatIdChange = vi.fn();
+  const postToChat = vi.fn();
+  let finishTurn!: () => void;
+  const turnInFlight = new Promise<void>(resolve => { finishTurn = resolve; });
+  const fallbackFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith(chatPath) && init?.method === 'POST') {
+      postToChat(url, JSON.parse(String(init.body)));
+      if (url === `${chatPath}/${CHAT_ID}/turn`) await turnInFlight;
+      return Response.json({ conversation: chat });
+    }
+    if (url === `${chatPath}/${CHAT_ID}`) return Response.json({ conversation: chat });
+    if (url === `${chatPath}/${otherChat.id}`) return Response.json({ conversation: otherChat });
+    return fallbackFetch(input, init);
+  };
+
+  const render = (chatId: string | null) => act(async () => root.render(
+    <I18nProvider initialLocale="en">
+      <SuperAgentWorkspace active chatId={chatId} onChatIdChange={onChatIdChange}
+        onOpenDesignProject={vi.fn()} onOpenMotionProject={vi.fn()} onOpenAsset={vi.fn()}
+        onOpenBrandKit={vi.fn()} onOpenAgentSettings={vi.fn()} onOpenMcp={vi.fn()}
+      />
+    </I18nProvider>,
+  ));
+  const title = () => container.querySelector('.om-sa-stream-title')?.textContent;
+  const instructions = 'Start with Step 1 · Get a Mini Game AppID.';
+  const handoff = (prompt: string) => act(async () => queueSuperAgentHandoff({
+    existingChatId: CHAT_ID, newChat: false, autoSend: true, mode: 'game', prompt, hiddenInstructions: instructions,
+  }));
+
+  await render(CHAT_ID);
+  await vi.waitFor(() => expect(title()).toBe(chat.title));
+  await handoff('Publish the game to Douyin');
+  expect(postToChat).toHaveBeenCalledExactlyOnceWith(`${chatPath}/${CHAT_ID}/turn`, expect.objectContaining({
+    text: 'Publish the game to Douyin', hiddenInstructions: instructions, mode: 'game', followUpBehavior: 'queue',
+  }));
+
+  await handoff('Follow-up queued before navigating');
+  await render(otherChat.id);
+  await vi.waitFor(() => expect(title()).toBe(otherChat.title));
+  await act(async () => finishTurn());
+  await flush();
+  expect(title()).toBe(otherChat.title);
+
+  await render(null);
+  await handoff('Handoff with no conversation');
+  await flush();
+  expect(postToChat).toHaveBeenCalledTimes(1);
+  expect(onChatIdChange).not.toHaveBeenCalled();
+});
+
+async function openDouyinPublishPanel(lookup: 'linked' | 'empty' | 'failed', lookupDelay?: Promise<void>) {
+  clearSuperAgentCache();
+  resetGamePublishStore();
+  const game: GameCard = {
+    id: `douyin-publish-${lookup}`, title: 'Sling Castle', description: '',
+    source: 'mine', status: 'ready', genre: 'casual', style: null, setting: null,
+    multiplayer: false, maxPlayers: 1, cover: null,
+    playUrl: `/motion-api/games/douyin-publish-${lookup}/play/index.html`,
+    plays: 0, likes: 0, dislikes: 0, reaction: 0, favorite: false,
+    remixOf: null, controls: '', createdAt: '2026-01-01', updatedAt: '2026-01-01',
+  };
+  const linkedArtifact: SuperAgentChat['artifacts'][number] = {
+    id: 'linked-game-artifact', kind: 'game-project', projectId: game.id,
+    title: game.title, url: game.playUrl, createdAt: 1000, updatedAt: 1000,
+  };
+  const linkedChat: SuperAgentChat = {
+    ...sampleChat, id: '377c349c-4da5-4bed-9d4d-4ea488d44d2f', title: 'Original Sling Castle conversation',
+    intent: 'game', state: 'idle', messages: [], approvals: [], artifacts: [linkedArtifact], activeArtifactId: linkedArtifact.id,
+  };
+  const onChatIdChange = vi.fn();
+  const lookupChat = vi.fn();
+  const loadLinkedChat = vi.fn();
+  const postToChat = vi.fn();
+  const baseFetch = globalThis.fetch;
+  const chatPath = `${SUPER_AGENT_API}/chats`;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url === '/motion-api/games') return Response.json({ games: [game] });
+    if (url === '/motion-api/settings/account') return Response.json({ state: 'signed-out' });
+    if (url.startsWith(chatPath) && init?.method === 'POST') {
+      postToChat(url, JSON.parse(String(init.body)));
+      return Response.json({ conversation: linkedChat });
+    }
+    if (url === `${chatPath}?gameId=${game.id}`) {
+      lookupChat();
+      await lookupDelay;
+      if (lookup === 'failed') return Response.json({ error: 'Lookup service unavailable' }, { status: 503 });
+      return Response.json({ conversations: lookup === 'linked' ? [summarizeSuperAgentChat(linkedChat)] : [] });
+    }
+    if (url === `${chatPath}/${linkedChat.id}`) {
+      loadLinkedChat();
+      return Response.json({ conversation: linkedChat });
+    }
+    return baseFetch(input, init);
+  };
+
+  const render = (chatId: string | null) => act(async () => root.render(
+    <I18nProvider initialLocale="en">
+      <SuperAgentWorkspace active chatId={chatId} requestedMode="game" requestedGameId={chatId ? null : game.id}
+        onChatIdChange={onChatIdChange} onOpenDesignProject={vi.fn()} onOpenMotionProject={vi.fn()}
+        onOpenAsset={vi.fn()} onOpenBrandKit={vi.fn()} onOpenAgentSettings={vi.fn()} onOpenMcp={vi.fn()}
+      />
+    </I18nProvider>,
+  ));
+  const panel = () => container.querySelector('aside[aria-label="Publish panel"]');
+  await render(null);
+  const publish = () => container.querySelector<HTMLButtonElement>('.om-sa-publish-trigger');
+  await vi.waitFor(() => expect(publish()).toBeTruthy());
+  await act(async () => publish()!.click());
+  const douyin = panel()!.querySelector<HTMLElement>('[role="radio"][aria-label="Douyin Mini Game"]');
+  expect(douyin).toBeTruthy();
+  await act(async () => douyin!.click());
+
+  return { render, panel, chatPath, linkedChat, onChatIdChange, lookupChat, loadLinkedChat, postToChat };
+}
+
+it('routes Douyin publishing to the original game conversation before queuing the AppID guide', async () => {
+  const { render, panel, chatPath, linkedChat, onChatIdChange, lookupChat, loadLinkedChat, postToChat } = await openDouyinPublishPanel('linked');
+  expect(lookupChat).toHaveBeenCalledTimes(1);
+  expect(loadLinkedChat).toHaveBeenCalled();
+  expect(onChatIdChange).toHaveBeenCalledExactlyOnceWith(linkedChat.id);
+  expect(postToChat).not.toHaveBeenCalled();
+
+  await render(linkedChat.id);
+  await vi.waitFor(() => {
+    expect(container.querySelector('.om-sa-stream-title')?.textContent).toBe(linkedChat.title);
+    expect(panel()?.querySelector('h2')?.textContent).toBe('Douyin Mini Game');
+    expect(postToChat).toHaveBeenCalledExactlyOnceWith(`${chatPath}/${linkedChat.id}/turn`, expect.objectContaining({
+      text: 'Publish “Sling Castle” to Douyin Mini Game',
+      hiddenInstructions: expect.stringContaining('Get a Mini Game AppID'),
+      followUpBehavior: 'queue',
+    }));
+  });
+});
+
+it.each(['empty', 'failed'] as const)('keeps Douyin publishing in the panel for a %s conversation lookup', async lookup => {
+  const { panel, onChatIdChange, lookupChat, loadLinkedChat, postToChat } = await openDouyinPublishPanel(lookup);
+  expect(lookupChat).toHaveBeenCalledTimes(1);
+  expect(loadLinkedChat).not.toHaveBeenCalled();
+  expect(panel()?.textContent).toContain('Get a Mini Game AppID');
+  if (lookup === 'failed') {
+    expect(document.body.textContent).toContain('Could not load the game’s conversation. Continue in the publish panel.');
+    expect(document.body.textContent).not.toContain('Lookup service unavailable');
+  }
+  const done = [...panel()!.querySelectorAll('button')].find(button => button.textContent === 'Done');
+  expect(done).toBeTruthy();
+  await act(async () => done!.click());
+  expect(panel()?.textContent).toContain('I uploaded it');
+  expect(onChatIdChange).not.toHaveBeenCalled();
+  expect(postToChat).not.toHaveBeenCalled();
+});
+
+it('ignores the Douyin conversation lookup if the publish panel closes while it is loading', async () => {
+  const lookup = Promise.withResolvers<void>();
+  const { panel, onChatIdChange, lookupChat, loadLinkedChat, postToChat } = await openDouyinPublishPanel('linked', lookup.promise);
+  expect(lookupChat).toHaveBeenCalledTimes(1);
+  const close = panel()!.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+  expect(close).toBeTruthy();
+  await act(async () => close!.click());
+  await act(async () => lookup.resolve());
+  expect(panel()).toBeNull();
+  expect(loadLinkedChat).not.toHaveBeenCalled();
+  expect(onChatIdChange).not.toHaveBeenCalled();
+  expect(postToChat).not.toHaveBeenCalled();
+});
+
 it('auto-sends queued game handoffs from Game Studio, renders gamepad-line icon, and views/codes game artifacts', async () => {
   const GAME_CHAT_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
   const GAME_ID = 'game-star-99';
@@ -3302,7 +3485,7 @@ it.each([
   );
   expect(createCalls).toHaveLength(0);
   expect(onChatIdChange).toHaveBeenCalledWith(null);
-  expect(document.body.textContent).toContain('What can I create for you?');
+  expect(document.body.textContent).toContain('What would you like to create today?');
   expect(document.querySelector('.om-sa-viewer')).toBeNull();
 });
 
@@ -7305,7 +7488,7 @@ it('clamps out-of-range bounded numeric SSOT parameters on blur and emits clampe
   expect(turnBodies[0]?.hiddenInstructions).toContain('"num_frames":161');
 });
 
-it('exposes Motion graphics as a primary entry, moves Create audio into Explore more, and separates AI Video vs Motion Graphics templates', async () => {
+it('keeps Motion graphics inside video creation and separates its templates from AI Video', async () => {
   setupDesignStudioMocks({ extraVideoAssets: 24, assetPageFailures: 1 });
   const flushMore = async () => {
     await flush();
@@ -7341,12 +7524,16 @@ it('exposes Motion graphics as a primary entry, moves Create audio into Explore 
   await act(async () => moreBtn.click());
   await flush();
 
-  // 2) Clicking Motion graphics opens Video mode on the Motion graphics engine with pure Motion Graphics templates
-  const motionStarter = [...container.querySelectorAll('.om-sa-starter-card')].find(
-    el => el.textContent?.includes('Motion graphics'),
-  ) as HTMLButtonElement;
-  expect(motionStarter).toBeTruthy();
-  await act(async () => motionStarter.click());
+  // Motion graphics remains available through the engine picker in video mode.
+  expect(container.querySelector('.om-sa-starter-grid')?.textContent).not.toContain('Motion graphics');
+  await act(async () => ([...container.querySelectorAll<HTMLButtonElement>('.om-sa-starter-card')]
+    .find(el => el.textContent?.includes('Make a video'))!).click());
+  await flushMore();
+  await act(async () => ([...container.querySelectorAll<HTMLButtonElement>('.om-sa-composer-top-bar button')]
+    .find(el => el.textContent?.includes('AI Video'))!).click());
+  await flush();
+  await act(async () => ([...document.querySelectorAll<HTMLButtonElement>('.om-sa-popover-pill')]
+    .find(el => el.textContent?.includes('Motion graphics'))!).click());
   await flushMore();
 
   expect(container.querySelector('.om-sa-composer-top-bar')?.textContent).toContain('Motion graphics');

@@ -6,6 +6,7 @@ import type { Entry, Registry, PendingEvent, Receipt } from './core.ts';
 import { unknownHost } from './host.ts';
 import { unknownDevice } from './device.ts';
 import type { DeviceIdentity } from './device.ts';
+import { currentProductId } from '../shared/product-identity.ts';
 
 export type Identity = { installation_id: string; utm_source: string | null; created_at: string };
 const sourcePattern = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -90,16 +91,18 @@ export function posthogCommonProperties(options: {
   hostContext?: Record<string, unknown>;
   deviceTimezone: string | null;
   utcOffsetMinutes: number;
+  channel?: string;
 }) {
-  const { endpoint, identity, device, appVersion, source, eventId, occurredAt, entrypoint, hostContext, deviceTimezone, utcOffsetMinutes } = options;
+  const { endpoint, identity, device, appVersion, source, eventId, occurredAt, entrypoint, hostContext, deviceTimezone, utcOffsetMinutes, channel } = options;
   return {
     event_schema_version: 1,
     schema_version: 1,
     product: 'openmotion',
+    source_product: currentProductId(),
     ...(hostContext ?? unknownHost),
     app_version: appVersion,
     env: endpoint.env,
-    channel: 'standalone',
+    channel: channel ?? 'standalone',
     ...(endpoint.testRunId ? { test_run_id: endpoint.testRunId } : {}),
     event_id: eventId,
     $insert_id: eventId,
@@ -184,6 +187,7 @@ export function createPosthogSender(options: {
           hostContext: event.host_context,
           deviceTimezone: event.device_timezone,
           utcOffsetMinutes: event.utc_offset_minutes,
+          channel: typeof event.properties.channel === 'string' ? event.properties.channel : undefined,
         }),
       },
     }));

@@ -27,12 +27,14 @@ export function PlatformProgress({ session }: { session: GamePublishSession }) {
   const tool = gamePublishDevTool(session.toolCheck?.toolId);
   return (
     <div className="om-gp-overview">
-      <p className="om-gp-overview-now" role="status">
-        <strong>{finished
-          ? t('All {total} steps done', { total })
-          : waitingForTool && tool ? t('Needed · {tool}', { tool: t(tool.name) })
-            : t('Step {current} of {total} · {name}', { current: session.stepIndex + 1, total, name: t(current.title) })}</strong>
-      </p>
+      {(session.chatId || finished) && (
+        <p className="om-gp-overview-now" role="status">
+          <strong>{finished
+            ? t('All {total} steps done', { total })
+            : waitingForTool && tool ? t('Needed · {tool}', { tool: t(tool.name) })
+              : t('Step {current} of {total} · {name}', { current: session.stepIndex + 1, total, name: t(current.title) })}</strong>
+        </p>
+      )}
       <OpenDesignProgress session={session} />
       <ol className="om-gp-overview-list">
         {platform.steps.map((step, index) => {
@@ -54,9 +56,12 @@ export function PlatformProgress({ session }: { session: GamePublishSession }) {
 /**
  * Inline controls for the current publish step (developer tool check, choices, store links,
  * one-click package download, OpenDesign link sign-in, platform links, and step completion CTA).
- * Advances the local publish store directly without queueing extra Agent turns.
  */
-export function PlatformInlineControls({ session, onNotify }: { session: GamePublishSession; onNotify?: Notify }) {
+export function PlatformInlineControls({ session, stepReplyText, onNotify }: {
+  session: GamePublishSession;
+  stepReplyText?: string;
+  onNotify?: Notify;
+}) {
   const { t } = useI18n();
   const platform = gamePublishPlatform(session.platformId);
   if (!platform || platform.id === 'wechat' || session.view !== 'step') return null;
@@ -81,16 +86,19 @@ export function PlatformInlineControls({ session, onNotify }: { session: GamePub
   const total = platform.steps.length;
   const isPackageStep = step.kind === 'package';
   const reusablePackage = !isPackageStep && session.package?.state === 'ready' ? session.package.result : undefined;
+  const links = (step.links ?? []).filter(link => !stepReplyText?.includes(link.href));
   return (
     <div className="om-gp-inline">
-      <div className="om-gp-inline-step-head">
-        <strong>{t('Step {current} of {total} · {name}', { current: session.stepIndex + 1, total, name: t(step.title) })}</strong>
-        {step.todo.length > 1 && (
-          <ol className="om-gp-inline-todo">
-            {step.todo.map(item => <li key={item}>{t(item)}</li>)}
-          </ol>
-        )}
-      </div>
+      {!stepReplyText && (
+        <div className="om-gp-inline-step-head">
+          <strong>{t('Step {current} of {total} · {name}', { current: session.stepIndex + 1, total, name: t(step.title) })}</strong>
+          {step.todo.length > 1 && (
+            <ol className="om-gp-inline-todo">
+              {step.todo.map(item => <li key={item}>{t(item)}</li>)}
+            </ol>
+          )}
+        </div>
+      )}
       {step.fields?.map(field => (
         <label key={field.label} className="om-gp-field">
           <span className="om-gp-field-label">{t(field.label)}</span>
@@ -114,9 +122,9 @@ export function PlatformInlineControls({ session, onNotify }: { session: GamePub
       )}
       {isPackageStep && <PackageStep session={session} stepRef={{ platformId: platform.id, stepIndex: session.stepIndex }} />}
       {step.kind === 'link' && <LinkStep session={session} onNotify={onNotify} />}
-      {step.links && (
+      {links.length > 0 && (
         <div className="om-gp-links">
-          {step.links.map(link => (
+          {links.map(link => (
             <a key={link.label} className="om-gp-link" href={link.href} target="_blank" rel="noopener noreferrer">{t(link.label)} <RemixIcon name="external-link-line" size={12} /></a>
           ))}
         </div>
@@ -211,7 +219,7 @@ function PackageStep({ session, stepRef }: { session: GamePublishSession; stepRe
 /** Step that needs the real OpenDesign link (Telegram). */
 function LinkStep({ session, onNotify }: { session: GamePublishSession; onNotify?: Notify }) {
   const { t } = useI18n();
-  const { account, signedIn, authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(session.artifactId, onNotify);
+  const { account, signedIn, authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(session.artifactId, onNotify, 'game_publish_telegram_signin', !session.linkUrl);
   if (session.linkUrl) {
     return (
       <div className="om-gp-checks">

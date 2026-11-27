@@ -1,11 +1,13 @@
 import { Button } from 'open-design-ui/button';
 import { useEffect, useRef } from 'react';
+import type { SuperAgentMessage } from '../../../../shared/super-agent';
 import { useI18n } from '../../i18n/I18n';
 import { RemixIcon } from '../../icons/RemixIcons';
 import { downloadPackage } from './gamePackage';
 import { gamePublishActions, useGamePublishSession, useGamePublishThread, usePublishForChat, type GamePublishThreadEntry } from './gamePublishStore';
 import { CompactLink, WechatInlineControls } from './WechatProgress';
 import { PlatformInlineControls } from './PlatformStepControls';
+import { gamePublishPlatform } from './platforms';
 import { useOpenDesignPublishSignIn } from './useOpenDesignPublishSignIn';
 import './gamePublish.css';
 
@@ -13,10 +15,11 @@ type Notify = (message: string, tone?: 'info' | 'error') => void;
 
 /**
  * Publish activity rendered below the conversation: real work as it finishes (OpenDesign link, package builds)
- * and self-contained inline step cards. Only WeChat Mini Game is Agent-guided; all other platforms advance locally.
+ * and inline step controls. Douyin uses the page instructions if a matching Agent reply is unavailable.
  */
-export function GamePublishThread({ chatId, onOpenPanel, onNotify }: {
+export function GamePublishThread({ chatId, messages, onOpenPanel, onNotify }: {
   chatId: string | null | undefined;
+  messages?: readonly SuperAgentMessage[];
   onOpenPanel: (artifactId: string) => void;
   onNotify?: Notify;
 }) {
@@ -33,10 +36,26 @@ export function GamePublishThread({ chatId, onOpenPanel, onNotify }: {
     if (progressKey !== '|') endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [progressKey]);
   if (!entries.length && !active) return null;
+  const showStepFirst = active?.platformId === 'douyin-minigame';
+  const requestedAt = active?.guideRequestedAt;
+  const platform = showStepFirst ? gamePublishPlatform(active.platformId) : undefined;
+  const step = active && platform?.steps[active.stepIndex];
+  const heading = active && platform && step ? t('Step {current} of {total} · {name}', {
+    current: active.stepIndex + 1, total: platform.steps.length, name: t(step.title),
+  }).replace(/\s/g, '') : undefined;
+  const stepReply = heading && requestedAt !== undefined ? messages?.findLast(message => {
+    if (message.role !== 'assistant' || message.status === 'streaming' || message.createdAt < requestedAt) return false;
+    const [firstLine, ...body] = message.text.trim().split(/\r?\n/);
+    return firstLine.replace(/[\s#*_]/g, '') === heading && body.some(line => line.trim());
+  }) : undefined;
+  const activeStep = active && (active.platformId === 'wechat'
+    ? <WechatInlineControls session={active} />
+    : <PlatformInlineControls session={active} stepReplyText={stepReply?.text} onNotify={onNotify} />);
   return (
     <div className="om-gp-thread" aria-label={t('Publish activity')}>
+      {showStepFirst && activeStep}
       {entries.map(entry => <ThreadEntry key={entry.id} entry={entry} activeInline={Boolean(active)} onOpenPanel={onOpenPanel} onNotify={onNotify} />)}
-      {active && (active.platformId === 'wechat' ? <WechatInlineControls session={active} /> : <PlatformInlineControls session={active} onNotify={onNotify} />)}
+      {!showStepFirst && activeStep}
       <div ref={endRef} />
     </div>
   );
@@ -48,7 +67,7 @@ function LinkFailedCard({ entry, onNotify }: {
 }) {
   const { t } = useI18n();
   const session = useGamePublishSession(entry.artifactId);
-  const { authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(entry.artifactId, onNotify);
+  const { authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(entry.artifactId, onNotify, 'game_publish_failed_signin', Boolean(entry.authRequired));
   const canSkip = Boolean(session?.platformId && session.platformId !== 'telegram');
   return (
     <div className="om-gp-result-card" data-failed>
@@ -138,7 +157,7 @@ function ThreadEntry({ entry, activeInline, onOpenPanel, onNotify }: { entry: Ga
 function PostPublishSignInHook({ artifactId, onNotify }: { artifactId: string; onNotify?: Notify }) {
   const { t } = useI18n();
   const session = useGamePublishSession(artifactId);
-  const { account, signedIn, authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(artifactId, onNotify);
+  const { account, signedIn, authorizing, signingIn, startSignIn } = useOpenDesignPublishSignIn(artifactId, onNotify, 'game_publish_post_signin', Boolean(session && !session.linkUrl));
   if (!session || session.linkUrl || !account || signedIn) return null;
   return (
     <div className="om-gp-post-signin" data-testid="game-publish-post-signin-hook">

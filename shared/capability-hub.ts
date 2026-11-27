@@ -245,6 +245,8 @@ export type SuperAgentHandoffPayload = {
   title?: string;
   autoSend?: boolean;
   newChat?: boolean;
+  /** Auto-send only while this existing conversation is open. */
+  existingChatId?: string;
 };
 
 export function capabilityRefToAttachment(ref: CapabilityResourceRef): SuperAgentResourceAttachment | null {

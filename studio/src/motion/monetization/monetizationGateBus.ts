@@ -3,6 +3,7 @@
  * Deliberately decoupled from multi-tenant WorkspaceCollabContext so it works cleanly in OpenGame Studio.
  */
 import { useSyncExternalStore } from 'react';
+import type { EntitlementHookId } from '../../../../tracking/events.ts';
 import type { Fields } from '../reporting';
 
 export type MonetizationGateKind = 'balance' | 'concurrency' | 'resolution';
@@ -11,6 +12,10 @@ export interface MonetizationGateRequest {
   kind: MonetizationGateKind;
   pageName?: NonNullable<Fields<'surface_view'>['page_name']>;
   studioId?: string;
+  modality?: 'image' | 'video' | 'audio' | 'all';
+  /** Optional attribution carried from the triggering card/touchpoint so entry_id and hook_id stay unbroken. */
+  entryId?: string;
+  hookId?: EntitlementHookId;
   /** Optional contextual detail from a failed generation or publish call (never raw stack traces). */
   reason?: 'insufficient_balance' | 'quota_exceeded' | 'billing_past_due' | 'concurrency_limit' | 'high_resolution';
   activeCount?: number;
@@ -79,6 +84,7 @@ export function detectMonetizationGateFromError(error: { status?: number; code?:
 
   if (
     status === 402
+    || code === 'balance_low'
     || code === 'insufficient_balance'
     || code === 'insufficient_credits'
     || code === 'credits_exhausted'
@@ -96,17 +102,18 @@ export function detectMonetizationGateFromError(error: { status?: number; code?:
       : code === 'quota_exceeded' || message.includes('quota')
         ? 'quota_exceeded'
         : 'insufficient_balance';
-    return { kind: 'balance', reason, pageName: 'creative_studio', studioId: 'game' };
+    return { kind: 'balance', reason, pageName: 'creative_studio' };
   }
 
   if (
     code === 'concurrency_limit'
     || code === 'concurrency_limit_exceeded'
+    || code === 'video_concurrency_limit_exceeded'
     || code === 'too_many_concurrent_tasks'
     || message.includes('concurrency limit')
     || message.includes('concurrent tasks limit')
   ) {
-    return { kind: 'concurrency', reason: 'concurrency_limit', pageName: 'creative_studio', studioId: 'game' };
+    return { kind: 'concurrency', reason: 'concurrency_limit', pageName: 'creative_studio' };
   }
 
   return null;

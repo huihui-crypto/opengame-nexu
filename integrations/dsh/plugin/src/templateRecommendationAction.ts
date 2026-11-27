@@ -7,6 +7,7 @@ export type RecommendedTemplate = {
   description?: string;
   posterUrl?: string;
   previewUrl?: string;
+  playUrl?: string;
   duration?: number;
   editable?: boolean;
 };

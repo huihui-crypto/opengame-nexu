@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { attributedEntryId, PRODUCT_UTM_SOURCE } from '../../../shared/product-identity';
+import { attributedEntryId, buildPlacementId, currentProductId, type MonetizationModality } from '../../../shared/product-identity';
+import type { EntitlementHookId } from '../../../tracking/events.ts';
 import { isDesktopApp } from '../utils/platformHost';
 import type { ExploreFilters } from './workspacePageRouting';
 
 /**
- * Black Friday campaign links from OpenMotion to the OpenDesign Pricing page.
+ * Campaign and monetization links from Studio to the OpenDesign Pricing page.
  *
- * Each link carries the cross-product attribution the Pricing page already reads (`od_entry_id`, `od_entry_source`,
- * `od_entry_at`) and keeps as the first touch through checkout, plus `od_origin=openmotion` and standard UTM fields for
- * the website's session source. Click events keep the raw UUID `entry_id`; OpenGame links add an `opengame-` prefix
- * to `od_entry_id`, which is removed when joining clicks to Pricing visits and payments. No account, installation
- * or device data is placed in the address.
+ * Each link carries the unified 4D `od_*` attribution protocol (`od_origin`, `od_entry_source`, `od_entry_id`,
+ * `od_entry_at`, `od_placement_id`, plus `od_campaign_id` during active campaigns) with zero `utm_*` params.
+ * Click events keep the raw UUID `entry_id`; OpenGame links add an `opengame-` prefix to `od_entry_id`, which
+ * is removed when joining clicks to Pricing visits and payments. No account, installation or device data is
+ * placed in the address.
  */
 export const BLACK_FRIDAY_CAMPAIGN = 'black_friday_2026';
 
@@ -112,39 +113,72 @@ export type CampaignEntrySource =
   | 'opengame_resolution_gate'
   | 'opengame_studio_free_gate'
   | 'opengame_agent_upgrade'
-  | 'opengame_publish_unlisted';
-/**
- * The `od_entry_source` sent for these entries. AMR keeps an attribution only for registered sources, and
- * `openmotion_manage_subscription` is the source it already accepts; an unregistered value would drop the
- * whole attribution, entry id included. Entries are told apart by `utm_medium` and by the click event
- * that carries the raw UUID `entry_id`.
- */
-const REGISTERED_ENTRY_SOURCE = 'openmotion_manage_subscription';
-const utmMedium: Record<CampaignEntrySource, string> = {
-  openmotion_bf_banner: 'banner',
-  openmotion_header_pricing: 'header',
-  opengame_balance_gate: 'balance_gate',
-  opengame_concurrency_gate: 'concurrency_gate',
-  opengame_resolution_gate: 'resolution_gate',
+  | 'opengame_publish_unlisted'
+  | 'opengame_model_hub_bf_pill'
+  | 'opengame_explore_bf_hero';
+/** Canonical semantic touchpoint (`EntitlementHookId`) for each Pricing link source. */
+const entrySourceHookId: Record<CampaignEntrySource, EntitlementHookId> = {
+  openmotion_bf_banner: 'bf_banner',
+  openmotion_header_pricing: 'header_pricing',
+  opengame_balance_gate: 'balance_gate_topup',
+  opengame_concurrency_gate: 'concurrency_gate_upgrade',
+  opengame_resolution_gate: 'studio_res_gate',
   opengame_studio_free_gate: 'studio_free_gate',
-  opengame_agent_upgrade: 'agent_upgrade',
-  opengame_publish_unlisted: 'game_publish_unlisted',
+  opengame_agent_upgrade: 'studio_free_gate',
+  opengame_publish_unlisted: 'game_publish_unlisted_upgrade',
+  opengame_model_hub_bf_pill: 'model_hub_bf_pill',
+  opengame_explore_bf_hero: 'explore_bf_hero',
+};
+
+const defaultStudioForSource: Record<CampaignEntrySource, string> = {
+  openmotion_bf_banner: 'header',
+  openmotion_header_pricing: 'header',
+  opengame_balance_gate: 'unknown',
+  opengame_concurrency_gate: 'unknown',
+  opengame_resolution_gate: 'unknown',
+  opengame_studio_free_gate: 'assets',
+  opengame_agent_upgrade: 'game',
+  opengame_publish_unlisted: 'game',
+  opengame_model_hub_bf_pill: 'model_hub',
+  opengame_explore_bf_hero: 'explore',
+};
+
+export type CampaignPricingContext = {
+  studioId?: string;
+  modality?: MonetizationModality;
+  at?: Date;
+  campaign?: boolean;
 };
 
 export function newCampaignEntryId() {
   return crypto.randomUUID();
 }
 
-export function campaignPricingUrl(locale: string | undefined, source: CampaignEntrySource, entryId: string, at = new Date(), campaign = blackFridayActive(at.getTime())) {
+export function campaignPricingUrl(
+  locale: string | undefined,
+  source: CampaignEntrySource,
+  entryId: string,
+  atOrContext?: Date | CampaignPricingContext,
+  campaignOverride?: boolean,
+  contextOverride?: Pick<CampaignPricingContext, 'studioId' | 'modality'>,
+) {
+  const isDate = atOrContext instanceof Date;
+  const context: CampaignPricingContext | undefined = isDate ? contextOverride : (atOrContext ?? contextOverride);
+  const at = isDate ? atOrContext : (context?.at ?? new Date());
+  const campaign = campaignOverride ?? context?.campaign ?? blackFridayActive(at.getTime());
   const url = new URL((locale ?? '').startsWith('zh') ? 'https://open-design.ai/zh/pricing/' : 'https://open-design.ai/pricing/');
   url.search = new URLSearchParams({
-    od_origin: 'openmotion',
-    od_entry_source: REGISTERED_ENTRY_SOURCE,
+    od_origin: currentProductId(),
+    od_entry_source: entrySourceHookId[source],
     od_entry_id: attributedEntryId(entryId),
     od_entry_at: at.toISOString(),
-    utm_source: PRODUCT_UTM_SOURCE,
-    utm_medium: utmMedium[source],
-    ...(campaign ? { utm_campaign: BLACK_FRIDAY_CAMPAIGN } : {}),
+    od_placement_id: buildPlacementId(
+      'gui',
+      'studio',
+      context?.studioId ?? defaultStudioForSource[source],
+      context?.modality ?? 'all',
+    ),
+    ...(campaign ? { od_campaign_id: BLACK_FRIDAY_CAMPAIGN } : {}),
   }).toString();
   return url.toString();
 }

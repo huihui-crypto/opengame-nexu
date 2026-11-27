@@ -19,7 +19,7 @@ import { MotionIcon } from '../icons';
 import { projectHref } from '../workspaceRouting';
 import { Tooltip } from '../../components/ui/Tooltip';
 import { GameMasonry, interleavePortrait } from './GameMasonry';
-import { bundledGames, communityGames, communityRemixPrompt, composeBrief, coverUrl, formatPlays, gameApi, gameSource, isTopEarningGame, storedInstruction, genreCovers, genreLabels, settingCovers, styleCovers, genrePlaceholders, isLocalOnly, playableUrl, rememberInstruction, settingLabels, styleLabels, TOP_EARNING_TAG } from './gameCatalog';
+import { bundledGames, communityGames, communityRemixPrompt, composeBrief, coverUrl, formatPlays, gameApi, gameSource, isIsolatedGameFrame, isTopEarningGame, storedInstruction, genreCovers, genreLabels, settingCovers, styleCovers, genrePlaceholders, isLocalOnly, playableUrl, rememberInstruction, settingLabels, styleLabels, TOP_EARNING_TAG } from './gameCatalog';
 import { buildGameContextTags, buildGameHiddenInstructions, buildGameUserPrompt, toGameArtifact, toGameCapabilityRef } from './gameSuperAgent';
 import { optionId as optionFilter } from '../reporting';
 import { reportGameAction, reportGameClick, reportGameCreate, reportGameDetailShown, reportGameHandoffShown, reportGameSearch } from './gameTracking';
@@ -616,7 +616,7 @@ function GameProject({ game, offline, onClose, onRemix, onChange, onOpenMcp, onC
               <div><strong>{t('This game only runs on the creator’s site.')}</strong>
                 <Button variant="ghost" className="om-button h-auto" data-primary onClick={popout}><RemixIcon name="external-link-line" size={15} />{t('Open original')}</Button></div>
             </div>
-          : url ? <iframe key={gameFrameKey} ref={frame} {...(gameSourceReady && iframeUrl ? { src: iframeUrl } : {})} title={game.title} onLoad={() => { if (!gameSourceReady) return; if (!playReported.current) { playReported.current = true; reportGameAction('play', 'success', game); } }} sandbox={game.external ? 'allow-scripts allow-same-origin allow-pointer-lock allow-popups' : 'allow-scripts allow-forms allow-pointer-lock'} allow="fullscreen; gamepad; autoplay; clipboard-write" />
+          : url ? <iframe key={gameFrameKey} ref={frame} {...(gameSourceReady && iframeUrl ? { src: iframeUrl } : {})} title={game.title} onLoad={() => { if (!gameSourceReady) return; if (!playReported.current) { playReported.current = true; reportGameAction('play', 'success', game); } }} sandbox={game.external ? 'allow-scripts allow-same-origin allow-pointer-lock allow-popups' : `allow-scripts allow-forms allow-pointer-lock${isIsolatedGameFrame(url) ? ' allow-same-origin' : ''}`} allow="fullscreen; gamepad; autoplay; clipboard-write" />
           : <span className="om-muted">{t('Loading game…')}</span>}
       </div>
     </section>

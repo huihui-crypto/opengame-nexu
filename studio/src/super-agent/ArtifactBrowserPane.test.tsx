@@ -110,6 +110,25 @@ async function renderViewer(artifacts: SuperAgentArtifact[], initialTabId = arti
   });
 }
 
+it('waits for the isolated trial origin before navigating the game iframe', async () => {
+  let resolvePreview: (response: Response) => void = () => {};
+  const previewResponse = new Promise<Response>(resolve => { resolvePreview = resolve; });
+  vi.mocked(fetch).mockImplementation(async input => {
+    if (String(input).endsWith('/games/ball-match/preview-url')) return previewResponse;
+    return Response.json({ games: [] });
+  });
+
+  await renderViewer([LOCAL_GAME]);
+  expect(container.querySelector('iframe')?.getAttribute('src') ?? null).toBeNull();
+
+  const previewUrl = 'http://opengame-preview-0123456789abcdef01234567.localhost:4000/api/games/ball-match/play/index.html';
+  await act(async () => { resolvePreview(Response.json({ url: previewUrl })); });
+  const iframe = container.querySelector('iframe')!;
+  expect(iframe.getAttribute('src')).toContain(previewUrl + '?');
+  expect(iframe.getAttribute('src')).toContain('gameStartup=1');
+  expect(iframe.getAttribute('sandbox')?.split(' ')).toContain('allow-same-origin');
+});
+
 describe('ArtifactBrowserPane external game iframe reveal', () => {
   it('reveals slow external game iframes after timeout, shows background progress, logs diagnostic, and clears on load', async () => {
     vi.spyOn(diagnostics, 'diagnosticsActive').mockReturnValue(true);

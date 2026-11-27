@@ -21,6 +21,10 @@ export function trackingPreference(directory: string): boolean {
   try { return JSON.parse(readFileSync(path.join(directory, 'tracking/preferences.json'), 'utf8')).enabled === true; }
   catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
 }
+export function telemetryEnabledFor(directory: string, tracking?: OmTracking): boolean {
+  if (trackingLocked() || !trackingPreference(directory)) return false;
+  return tracking ? tracking.enabled() : true;
+}
 export async function saveTrackingPreference(directory: string, enabled: boolean) {
   const folder = path.join(directory, 'tracking'); await mkdir(folder, { recursive: true, mode: 0o700 });
   const temporary = path.join(folder, 'preferences.' + crypto.randomUUID() + '.tmp');
@@ -28,10 +32,20 @@ export async function saveTrackingPreference(directory: string, enabled: boolean
     await writeFile(temporary, JSON.stringify({ enabled }), { mode: 0o600, flag: 'wx' });
     await rename(temporary, path.join(folder, 'preferences.json'));
     if (!enabled) {
-      await import('./codex-session-tracking.ts').then(
-        mod => mod.discardActiveCodexThreads(directory),
-        () => rm(path.join(folder, 'active-codex-threads.json'), { force: true }),
-      );
+      await Promise.allSettled([
+        import('./codex-session-tracking.ts').then(
+          mod => mod.discardActiveCodexThreads(directory),
+          () => rm(path.join(folder, 'active-codex-threads.json'), { force: true }),
+        ),
+        import('./host-session-tracking.ts').then(
+          mod => mod.discardActiveHostSessions(directory),
+          () => rm(path.join(folder, 'active-host-sessions.json'), { force: true }),
+        ),
+        import('./super-agent-session-tracking.ts').then(
+          mod => mod.abortSuperAgentSessionTracking(directory),
+          () => {},
+        ),
+      ]);
     }
   } finally { await rm(temporary, { force: true }); }
 }

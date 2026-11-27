@@ -12,7 +12,7 @@
  * All copy is an English source key translated through `t()` (game-publish-ui.json).
  */
 import type { GamePackageTarget } from './gamePackage';
-import type { GamePublishDevToolId } from './devTools';
+import { GAME_PUBLISH_DEV_TOOLS, type GamePublishDevToolId } from './devTools';
 import { PLAYABLE_NETWORKS } from './playableNetworks';
 import type { WechatStepKey } from './wechatClient';
 import type { platformIcons } from '../../../../packages/design-system/platform-icons.js';
@@ -92,7 +92,6 @@ export const GAME_PUBLISH_PLATFORMS: readonly GamePublishPlatform[] = [
     effort: '3 steps in Douyin tools · not automated yet',
     badge: '抖',
     icon: 'douyin',
-    devTool: 'douyin-devtools',
     steps: [
       {
         short: 'Account',
@@ -107,6 +106,7 @@ export const GAME_PUBLISH_PLATFORMS: readonly GamePublishPlatform[] = [
         title: 'Create the project in Douyin DevTools and upload',
         why: 'OpenDesign cannot turn the game into a Mini Game project or upload it yet, so this is done in Douyin DevTools.',
         todo: ['Sign in to Douyin DevTools and create a Mini Game project with your AppID', 'Port the game into the project and run it in the simulator', 'Upload a test version'],
+        links: [{ label: 'Douyin DevTools', href: GAME_PUBLISH_DEV_TOOLS['douyin-devtools'].downloadHref }],
         cta: 'I uploaded it',
       },
       {

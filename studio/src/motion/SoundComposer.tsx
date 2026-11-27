@@ -22,7 +22,11 @@ import { supportsScene } from './creativeStudios';
 import type { StudioCreation } from './CreativeWorkspace';
 import { CreationModelPicker } from './GenerationModelPickers';
 import { emptyParameters, requestParameters, type ParameterDraft } from './GenerationParameters';
+import { setPendingAttribution } from './entitlementAttribution';
+import { detectMonetizationGateFromError, openMonetizationGate } from './monetization/monetizationGateBus';
+import { StudioFreeGateCard } from './monetization/StudioFreeGateCard';
 import * as tracking from './pageTracking';
+import { send } from './reporting';
 import { SoundAdvancedParameters, SoundParameters } from './SoundParameters';
 import {
   SOUND_MUSIC_TAGS,
@@ -145,6 +149,15 @@ export function SoundComposer({
 
   const unconfiguredPreferred = Boolean(gateway && preferred && !selected && preferredProvider && !preferredProvider.available);
   const accountNotIncluded = selected?.provider === 'account' && selectedProvider?.mediaEntitlement === 'not-included';
+  const studioId = studio.destination.studio.id;
+  const signInGateReportedRef = useRef(false);
+  useEffect(() => {
+    const showingAccountSignIn = Boolean(unconfiguredPreferred && preferredProvider?.id === 'account');
+    if (!showingAccountSignIn) { signInGateReportedRef.current = false; return; }
+    if (signInGateReportedRef.current) return;
+    signInGateReportedRef.current = true;
+    tracking.reportEntitlementGateView('creative_studio', 'studio_generate', { ...(studioId ? { studio_id: studioId } : {}), modality: 'audio' });
+  }, [unconfiguredPreferred, preferredProvider?.id, studioId]);
   const previewModel = selected ?? preferred;
   const parameters = previewModel ? parameterDrafts[previewModel.id] ?? emptyParameters : emptyParameters;
   const currentSpeed = typeof parameters.values.speed === 'number'
@@ -201,6 +214,8 @@ export function SoundComposer({
       tracking.reportAssetGenerationSubmit('audio', 'success', draft.references.length, false, studioContext);
     } catch (error) {
       tracking.reportAssetGenerationSubmit('audio', 'failure', draft.references.length, false, studioContext);
+      const gate = detectMonetizationGateFromError(error as { status?: number; code?: string; message?: string });
+      if (gate) openMonetizationGate({ ...gate, pageName: 'creative_studio', studioId, modality: 'audio' });
       if (mounted.current) onError((error as Error).message);
     } finally {
       if (mounted.current) setBusy(false);
@@ -484,9 +499,26 @@ export function SoundComposer({
                 type="button"
                 variant="ghost"
                 className="om-button h-auto"
-                onClick={() => preferredProvider!.id === 'account'
-                  ? (openAccountSettings ?? openModelSettings)()
-                  : openProviderSettings ? openProviderSettings(preferredProvider!.id) : openModelSettings()}
+                onClick={() => {
+                  if (preferredProvider!.id === 'account') {
+                    const entryId = tracking.newTrackingId();
+                    setPendingAttribution('sign_in', 'studio_generate', entryId, { studioId, modality: 'audio' });
+                    send('ui_click', {
+                      page_name: 'creative_studio',
+                      area: 'asset_create',
+                      element: 'start_sign_in',
+                      hook_id: 'studio_generate',
+                      entry_id: entryId,
+                      studio_id: studioId,
+                      modality: 'audio',
+                    });
+                    (openAccountSettings ?? openModelSettings)();
+                  } else if (openProviderSettings) {
+                    openProviderSettings(preferredProvider!.id);
+                  } else {
+                    openModelSettings();
+                  }
+                }}
               >
                 {preferredProvider!.id === 'account'
                   ? t('Sign in with OpenDesign')
@@ -502,18 +534,14 @@ export function SoundComposer({
           )}
 
           {accountNotIncluded && (
-            <div className="om-creation-setup" role="status">
-              <RemixIcon name="bank-card-line" size={18} />
-              <p className="om-muted">{t('Signed in; multimodal generation requires OpenDesign Plus or above')}</p>
-              <Button
-                type="button"
-                variant="ghost"
-                className="om-button h-auto"
-                onClick={() => (openSubscriptionSettings ?? openAccountSettings ?? openModelSettings)()}
-              >
-                {t('Manage subscription')}
-              </Button>
-            </div>
+            <StudioFreeGateCard
+              pageName="creative_studio"
+              studioId={studioId}
+              modality="audio"
+              testId="sound-studio-free-gate"
+              iconSize={18}
+              onManageSubscription={() => (openSubscriptionSettings ?? openAccountSettings ?? openModelSettings)()}
+            />
           )}
 
           {gateway && modelId && !selected && !unconfiguredPreferred && (

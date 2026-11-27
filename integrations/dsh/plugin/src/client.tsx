@@ -83,7 +83,7 @@ export function registerTemplateRecommendationBody(ctx: any): void {
   ctx.effect(() => ctx.actionCards.register({
     action: OPENMOTION_TEMPLATE_ACTION,
     locale: "openmotionTemplateRecommendations",
-    Body: function RecommendationBody(props: React.ComponentProps<typeof TemplateRecommendationCard>) {
+    Body: function RecommendationBody(props: Omit<React.ComponentProps<typeof TemplateRecommendationCard>, 'openGame'>) {
       const [libraryOpened, setLibraryOpened] = useState(false);
       useEffect(() => {
         if (!props.proposal.details.onboarding) return;
@@ -101,7 +101,7 @@ export function registerTemplateRecommendationBody(ctx: any): void {
         }
         return () => window.removeEventListener("openmotion:library-ready", ready);
       }, [props.proposal.callId, props.proposal.details.onboarding]);
-      return <TemplateRecommendationCard {...props} proposal={{ ...props.proposal,
+      return <TemplateRecommendationCard {...props} openGame={url => ctx.sidebarRight.openTab('browser', { params: { url } })} proposal={{ ...props.proposal,
         details: { ...props.proposal.details, libraryOpened } }} />;
     },
   }), "openmotion-dsh: template recommendation body");

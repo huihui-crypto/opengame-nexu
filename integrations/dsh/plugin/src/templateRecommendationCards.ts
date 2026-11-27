@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { languages } from "../../../../mcp-ui/template-recommendations/i18n.ts";
+import { isLocalGamePreviewUrl } from "../../../../shared/local-game-preview.ts";
 import { OPENMOTION_TEMPLATE_ACTION } from "./templateRecommendationAction.ts";
 
 const mediaUrl = z.string().url().refine(value => {
@@ -14,6 +15,7 @@ const templateSchema = z.object({
   description: z.string().max(1000).optional(),
   posterUrl: mediaUrl.optional(),
   previewUrl: mediaUrl.optional(),
+  playUrl: z.union([mediaUrl, z.string().refine(isLocalGamePreviewUrl)]).optional(),
   duration: z.number().finite().nonnegative().optional(),
   editable: z.boolean().optional(),
 });
@@ -50,6 +52,7 @@ export function registerOpenMotionTemplateCards(ctx: any): void {
         content: [
           "For OpenMotion installation onboarding and template recommendations, load this skill first. Follow the shared docs/install.md onboarding contract. During installation use exactly the three prepared IDs/order from scripts/install-onboarding.mjs --host deepseek; do not resample. Use the latest user-request language.",
           "Use openmotion_list_templates and openmotion_get_template to inspect candidate templates.",
+          "For OpenGame, use openmotion_game_get and put its HTML game link in playUrl. Reserve previewUrl for video media.",
           `Then call propose_action with action=${OPENMOTION_TEMPLATE_ACTION}, a concise title and brief, and details.templates containing one to six candidates. Include each candidate's exact id, title, description, posterUrl, previewUrl, duration and whether it is editable when available. For installation use cardPresentation.arguments from the installer: details.onboarding=true and details.language set to the request language. The native card opens the template library beside the current chat and confirms its loading; do not open a sample project or invent a libraryOpened claim. Show the shared welcome above exactly three cards, without repeating it in prose. Do not call openmotion_show_template_recommendations unless that separate MCP App tool is actually available. Do not call openmotion_create_project for a recommendation alone.`,
           "After the user chooses a card, continue with the selected template ID and ask for confirmation before creating an editable project.",
         ].join("\n\n"),

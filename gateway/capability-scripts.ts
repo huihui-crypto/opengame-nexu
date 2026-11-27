@@ -1,5 +1,33 @@
 import type { WorkspaceStore } from '../workspace.ts';
 import type { CapabilityDefinition } from '../shared/capability-registry.ts';
+import type {
+  MediaGenerationMode,
+  MediaGenerationPipelineStep,
+  MediaGenerationSpatialKind,
+} from '../tracking/tool-fields.ts';
+
+export type CapabilityScriptStage =
+  | 'uploading'
+  | 'submitting'
+  | 'polling'
+  | 'generating'
+  | 'reconnecting'
+  | 'remote_failed'
+  | 'downloading'
+  | 'decoding';
+
+export type CapabilityScriptTelemetryMeta = {
+  provider?: string;
+  modelId?: string;
+  providerOrigin?: string;
+  mode?: MediaGenerationMode;
+  spatialKind?: MediaGenerationSpatialKind;
+  pipelineStep?: MediaGenerationPipelineStep;
+  remoteId?: string;
+  remoteTerminal?: boolean;
+  accountPlan?: string;
+  outputBytes?: number;
+};
 
 export type CapabilityScriptContext = {
   store: WorkspaceStore;
@@ -10,6 +38,7 @@ export type CapabilityScriptContext = {
   options: Record<string, unknown>;
   parameters: Record<string, unknown>;
   references: { assetId: string; versionId: string; filename: string }[];
+  reportStage?: (stage: CapabilityScriptStage, meta?: CapabilityScriptTelemetryMeta) => void;
 };
 
 import { runOpenDesign3dScript, runOpenDesignWorldScript } from './opendesign-3d.ts';

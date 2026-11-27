@@ -121,6 +121,7 @@ function WorkspaceFrameInner({ children, waitForSaves, projectId, sessionId, blo
   const skillBriefs = useRef(new Map<string, SkillParameters>());
   const studioDrafts = useRef(new Map<string, AssetDraft>());
   const [studioVisit, setStudioVisit] = useState(0);
+  const [agentHomeVisit, setAgentHomeVisit] = useState(0);
   const libraryOpen = useRef(libraryRequested);
   const libraryClosed = useRef(onLibraryClose); libraryClosed.current = onLibraryClose;
   useEffect(() => {
@@ -457,7 +458,8 @@ function WorkspaceFrameInner({ children, waitForSaves, projectId, sessionId, blo
   const openPage = (target: 'explore' | 'mcp' | 'agent', client?: McpClient, example?: string) => {
     if (target === 'explore') { openHome(); return; }
     if (target === 'agent') {
-      navigatePage({ superAgent: true, superAgentChat: lastAgentChat.current, settings: null, templates: false });
+      navigatePage({ superAgent: true, superAgentChat: null, superAgentMode: null, settings: null, templates: false, template: null });
+      setAgentHomeVisit(visit => visit + 1);
       return;
     }
     openMcp(client, example);
@@ -602,6 +604,7 @@ function WorkspaceFrameInner({ children, waitForSaves, projectId, sessionId, blo
         selectedCinemaTemplate={selectedCinemaTemplate}
         connectionEntry={connectionEntry.current}
         studioVisit={studioVisit}
+        agentHomeVisit={agentHomeVisit}
         studioDrafts={studioDrafts}
         skillBriefs={skillBriefs}
         libraryTrigger={libraryTrigger}

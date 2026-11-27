@@ -12,6 +12,7 @@ import {
   pricingLinkTargetProps,
   readBlackFridayCountdown,
 } from './campaignAttribution';
+import { useCheckoutReturnRefresh } from './entitlementAttribution';
 import { trackMotion } from './tracking';
 
 const RING_COUNT = 8;
@@ -505,17 +506,35 @@ export function ExploreBlackFridayHero({ active = true, onExpire }: { active?: b
     interactionRef.current.hoveringTile = false;
   };
 
-  const pricingHref = campaignPricingUrl(locale, 'openmotion_bf_banner', entryId);
+  const markHeroCheckoutReturn = useCheckoutReturnRefresh('explore', 'explore_bf_hero');
+  const heroReportedRef = useRef(false);
+  useEffect(() => {
+    if (!active || heroReportedRef.current) return;
+    heroReportedRef.current = true;
+    void trackMotion('surface_view', {
+      page_name: 'explore',
+      area: 'campaign_banner',
+      element: 'banner',
+      hook_id: 'explore_bf_hero',
+      campaign_id: BLACK_FRIDAY_CAMPAIGN,
+      entry_id: entryId,
+    });
+  }, [active, entryId]);
+
+  const pricingHref = campaignPricingUrl(locale, 'opengame_explore_bf_hero', entryId);
   const claimOffer = (event: MouseEvent<HTMLAnchorElement>) => {
+    const clickedId = entryId;
+    markHeroCheckoutReturn(clickedId);
     void trackMotion('ui_click', {
       page_name: 'explore',
       area: 'campaign_banner',
       element: 'claim_offer',
+      hook_id: 'explore_bf_hero',
       campaign_id: BLACK_FRIDAY_CAMPAIGN,
-      entry_id: entryId,
+      entry_id: clickedId,
       interaction_method: event.detail === 0 ? 'keyboard' : 'pointer',
     });
-    event.currentTarget.href = campaignPricingUrl(locale, 'openmotion_bf_banner', entryId);
+    event.currentTarget.href = campaignPricingUrl(locale, 'opengame_explore_bf_hero', clickedId);
     window.setTimeout(() => setEntryId(newCampaignEntryId()), 0);
   };
 

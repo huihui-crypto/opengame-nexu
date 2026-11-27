@@ -2,6 +2,12 @@ import type { LibraryGeneration } from './asset-library.ts';
 import type { GenerationOptions } from './generation-options.ts';
 import { isSfxModel } from './audio-kind.ts';
 import { openDesignImageReferenceCap } from './opendesign-models.ts';
+import type {
+  MediaGenerationAccountPlan,
+  MediaGenerationEntrySurface,
+  MediaGenerationErrorCode,
+  MediaGenerationFailurePhase,
+} from '../tracking/tool-fields.ts';
 /** Public contract shared by the model gateway, MCP and Studio. Never contains credentials. */
 export const modalities = ['image', 'video', 'audio'] as const;
 export type Modality = typeof modalities[number];
@@ -62,9 +68,17 @@ export type GenerationJob = { id: string; projectId?: string; library?: LibraryG
   /** Original account image transfer; signed URLs and credentials are never persisted. */
   download?: { assetId: string; receivedBytes: number; totalBytes: number };
   createdAt: number; updatedAt: number; startedAt?: number; workerPid?: number;
-  phase: string; error?: string; remoteId?: string; assets: GeneratedAsset[];
+  phase: string; error?: string; errorCode?: string; remoteId?: string; assets: GeneratedAsset[];
   /** Internal telemetry metadata; never contains credentials, prompts or user content. */
   attemptKind?: 'initial' | 'resume' | 'retry_save';
+  telemetryRequestId?: string;
+  attemptId?: string;
+  attemptCount?: number;
+  attemptCreatedAt?: number;
+  entrySurface?: MediaGenerationEntrySurface;
+  accountPlan?: MediaGenerationAccountPlan;
+  lastErrorCode?: MediaGenerationErrorCode;
+  lastFailurePhase?: MediaGenerationFailurePhase;
   trackingHost?: { host_agent: string; host_agent_source: string; mcp_client_name?: string; mcp_client_version?: string } };
 
 /** Effective adapter input contract, shared by service validation and existing Studio controls. */

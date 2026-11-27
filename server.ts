@@ -1,4 +1,5 @@
 import { gameHttp, attachGameRooms } from './game-projects.ts';
+import { startLocalGamePreview } from './gateway/local-game-preview.ts';
 import type { ExportFailure } from './tracking/tool-fields.ts';
 import { toolFailureFields } from './tracking/tool-fields.ts';
 import { transcriptsFor, closeTranscripts } from './gateway/transcription.ts';
@@ -23,6 +24,8 @@ import { collectWorkspaceResources } from './gateway/super-agent-resources.ts';
 import { listTaskWorkspaceEntries, readTaskWorkspaceFile, resolveBrowsableRoots } from './gateway/super-agent-workspace.ts';
 import { assetHttp } from './gateway/asset-http.ts';
 import { capabilityDiscover, capabilityRun, loadCapabilityCatalog, syncCapabilityRemoteConfig } from './gateway/capability-center.ts';
+import { extractRequestReferenceMeta, isMediaTelemetryModality, recordPreGatewayRejection, spatialKindForCapability } from './gateway/media-telemetry.ts';
+import { findCapability } from './shared/capability-registry.ts';
 import { getWorkflow } from './shared/workflow.ts';
 import { attachmentDisposition } from './shared/http-header.ts';
 import { isMain } from './shared/entry.ts';
@@ -59,6 +62,8 @@ import { recoverProjectTransactions } from './phase1-versions.ts';
 import { verifyExport } from './scripts/verify-export.ts';
 import { createAppTracking, closeTracking, saveTrackingPreference, trackingPreference, trackingLockReason, type OmTracking } from './shared/tracking.ts';
 import { flushCodexSessionTracking, syncActiveCodexThreads } from './shared/codex-session-tracking.ts';
+import { flushHostSessionTracking, syncActiveHostSessions } from './shared/host-session-tracking.ts';
+import { flushSuperAgentSessionTracking } from './shared/super-agent-session-tracking.ts';
 import { studioEvents } from './tracking/events.ts';
 import { configureNativeEnvironment, nativeRuntimeStatus, startNativePreparation, requireNativeRuntime } from './scripts/npm-runtime.mjs';
 import { applySourceUpdate, checkSourceUpdate } from './shared/source-update.ts';
@@ -77,27 +82,18 @@ import { scenarioHttp } from './gateway/scenario-http.ts';
 import { designHttp } from './design-projects.ts';
 
 const sharedStore = new WorkspaceStore();
-export type Service = { trackingHosts?: Map<string, { host: HostContext; createdAt: number }>; diagnostics?: { running: boolean; lastExport: number; events: number; window: number }; studio?: Studio; runtimeRoot?: string; nativeRoot?: string; ffmpeg?: boolean; ffmpegPromise?: Promise<boolean>; poller?: AdaptivePoller; switching?: boolean; studioPort?: number; browser?: WorkspaceBrowser; editorToken?: string; ensureStudio?: (projectId?: string) => Promise<Studio>; launchStudio?: (directory: string, port: number) => Promise<Studio>; phase1?: Phase1Service; phase1Mutation?: Promise<void>; tracking?: OmTracking };
+export type Service = { trackingHosts?: Map<string, { host: HostContext; createdAt: number }>; diagnostics?: { running: boolean; lastExport: number; events: number; window: number }; studio?: Studio; runtimeRoot?: string; nativeRoot?: string; ffmpeg?: boolean; ffmpegPromise?: Promise<boolean>; poller?: AdaptivePoller; switching?: boolean; studioPort?: number; browser?: WorkspaceBrowser; editorToken?: string; ensureStudio?: (projectId?: string) => Promise<Studio>; launchStudio?: (directory: string, port: number) => Promise<Studio>; phase1?: Phase1Service; phase1Mutation?: Promise<void>; tracking?: OmTracking; localGamePreview?: (id: string, search?: string) => string };
 const service: Service = {};
 const working = new Set<string>();
 const runningExports = new Map<string, AbortController>();
-const workerInstanceId = crypto.randomUUID();
-const collectorId = crypto.randomUUID();
-let lastQueueTelemetry = 0;
 let lastCodexSessionSync = 0;
 
-async function emitQueueTelemetry(store: WorkspaceStore, tracking?: OmTracking) {
-  if (Date.now() - lastCodexSessionSync >= 60_000) {
-    lastCodexSessionSync = Date.now();
-    void syncActiveCodexThreads(store.directory).catch(() => {});
-  }
-  if (!tracking) return;
-  if (Date.now() - lastQueueTelemetry < 60_000) return;
-  lastQueueTelemetry = Date.now();
-  const job = await store.job().catch(() => null);
-  const queued = job?.state === 'pending' ? 1 : 0, running = job && ['running', 'cancelling'].includes(job.state) ? 1 : 0;
-  tracking.track('queue_snapshot', { instance_id: workerInstanceId, task_type: 'export', queued_count: queued, running_count: running, available_slots: running ? 0 : 1, counts_complete: true }, undefined, 'worker');
-  tracking.track('worker_heartbeat', { collector_id: collectorId, instance_id: workerInstanceId, active: true, queue_count: queued + running }, undefined, 'worker');
+// Periodic queue_snapshot and worker_heartbeat telemetry was retired; keep the 60s Codex and host session sync only.
+function syncCodexSessionsIfDue(store: WorkspaceStore) {
+  if (Date.now() - lastCodexSessionSync < 60_000) return;
+  lastCodexSessionSync = Date.now();
+  void syncActiveCodexThreads(store.directory).catch(() => {});
+  void syncActiveHostSessions(store.directory).catch(() => {});
 }
 
 export async function cancelExport(store: WorkspaceStore, projectId: string, jobId: string, tracking = store.tracking) {
@@ -151,7 +147,7 @@ export async function trackExportTerminal(store: WorkspaceStore, final: ExportJo
 }
 
 export async function renderNext(store: WorkspaceStore, runtimeRoot: string, tracking?: OmTracking) {
-  await emitQueueTelemetry(store, tracking);
+  syncCodexSessionsIfDue(store);
   const pending = await store.job();
   const key = store.directory;
   // The tick that renders a job also owns its record, so no tick reconciles work still running in this process.
@@ -297,19 +293,29 @@ async function readRawBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promis
   return Buffer.concat(chunks).toString('utf8');
 }
 
+function resolveTrackingHost(context: Service, token: unknown): HostContext | undefined {
+  if (typeof token !== 'string' || !uuid.test(token)) return undefined;
+  const page = context.trackingHosts?.get(token);
+  return page && Date.now() - page.createdAt <= 86_400_000 ? page.host : undefined;
+}
+
 async function invokePhase1WithTracking(
   store: WorkspaceStore,
   context: Service,
   originUrl: string,
   data: { name: string; arguments?: any; trackingHost?: unknown; trackingContext?: string; channel?: unknown },
+  emitUpgradeLinkResult = true,
 ) {
   if (!context.runtimeRoot) throw new Error('RUNTIME_NOT_READY');
   const phase1 = ensurePhase1(store, context, originUrl);
   const host = validHostContext(data.trackingHost) ? data.trackingHost : unknownHost;
   const channel: 'gui' | 'mcp' = data.channel === 'gui' ? 'gui' : 'mcp';
+  const mcpChannel: 'mcp_stdio' | 'mcp_http' = data.channel === 'mcp_http' ? 'mcp_http' : 'mcp_stdio';
   let result = await phase1.call(data.name, data.arguments ?? {}, host, {
     attributeEntry: Object.hasOwn(data, 'trackingHost'),
     channel,
+    mcpChannel,
+    emitUpgradeLinkResult,
   });
   if (host.host_agent !== 'unknown' && context.tracking?.enabled() && (result.previewUrl || result.previewHandoff)) {
     const hosts = context.trackingHosts ??= new Map();
@@ -325,12 +331,18 @@ async function invokePhase1WithTracking(
   return result;
 }
 
-// Legacy callers can send an empty POST. The gateway validates both optional attribution fields.
+// Legacy callers can send an empty POST. The gateway validates optional attribution fields.
 async function accountAttribution(req: IncomingMessage) {
-  if (!req.headers['content-type']?.startsWith('application/json')
-    || (!req.headers['transfer-encoding'] && !Number(req.headers['content-length']))) return {};
-  const body = await input(req, 4096);
-  return { hookId: body?.hookId, entryId: body?.entryId };
+  if (!req.headers['content-type']?.startsWith('application/json')) return {};
+  const body = await input(req, 4096).catch(() => ({}));
+  return {
+    hookId: body?.hookId,
+    entryId: body?.entryId,
+    studioId: body?.studioId,
+    modality: body?.modality,
+    entryFrom: body?.entryFrom,
+    trackingContext: body?.trackingContext,
+  };
 }
 
 function revision(value: unknown): asserts value is string {
@@ -967,7 +979,7 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
         return json(res, 405, { error: 'Unsupported Super Agent preferences request' });
       }
       if (url.pathname === '/api/super-agent/chats') {
-        if (req.method === 'GET') return json(res, 200, { conversations: await superAgent.list() });
+        if (req.method === 'GET') return json(res, 200, { conversations: await superAgent.list(url.searchParams.get('gameId') ?? undefined) });
         if (req.method === 'POST') {
           const data = req.headers['content-type']?.includes('application/json') ? await input(req, 64 * 1024) : {};
           return json(res, 200, { conversation: await superAgent.create(data) });
@@ -1140,7 +1152,13 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
     if (motionRequest && url.pathname.startsWith('/api/scenarios/') && await scenarioHttp(req, res, url, store.workspaceStore ?? store)) return;
     if (motionRequest && url.pathname.startsWith('/api/assets/') && await assetHttp(req, res, url, store)) return;
     if (motionRequest && await brandKitHttp(req, res, url, store.directory, input)) return;
-    if ((url.pathname === '/api/games' || url.pathname.startsWith('/api/games/')) && await gameHttp(req, res, url, (store.workspaceStore ?? store).directory, input, context.runtimeRoot)) return;
+    if (url.pathname === '/api/games' || url.pathname.startsWith('/api/games/')) {
+      // Vite preserves the original loopback Host, including its own port.
+      const localPreviewUrl = host && /^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(host)
+        ? context.localGamePreview
+        : undefined;
+      if (await gameHttp(req, res, url, (store.workspaceStore ?? store).directory, input, context.runtimeRoot, { localPreviewUrl })) return;
+    }
     if (motionRequest && url.pathname.startsWith('/api/design/') && await designHttp(req, res, url, (store.workspaceStore ?? store).directory, new URL(editorUrl).origin, input, ref => new AssetLibrary(store.workspaceStore ?? store).resolve(ref))) return;
     if (motionRequest && ['/api/diagnostics', '/api/diagnostics/events'].includes(url.pathname)) {
       // Downloads are POST-only: cross-origin links must not trigger a collection.
@@ -1215,8 +1233,7 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       const data = await input(req, 64 * 1024);
       if (!data || Object.keys(data).length !== 1 || !Array.isArray(data.events) || data.events.length > 16
         || !data.events.every((event: unknown) => validPending(studioEvents, event) && event.entrypoint === 'studio' && !Object.hasOwn(event, 'host_context'))) return json(res, 400, { error: 'INVALID_TRACKING_BATCH' });
-      const page = context.trackingHosts?.get(url.searchParams.get('context') ?? '');
-      const host = page && Date.now() - page.createdAt <= 86_400_000 ? page.host : unknownHost;
+      const host = resolveTrackingHost(context, url.searchParams.get('context')) ?? unknownHost;
       const statuses = data.events.map((event: object) => context.tracking!.ingest({ ...event, host_context: host }));
       const workRounds = new WorkRounds(store.workspaceStore ?? store, context.tracking);
       await Promise.allSettled(data.events.map((event: any, i: number) =>
@@ -1226,18 +1243,20 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
     if (motionRequest && url.pathname === '/api/phase1/call' && req.method === 'POST') {
       const data = await input(req);
       try {
-        const result = await invokePhase1WithTracking(store, context, new URL(editorUrl).origin, data);
         // Preserve metadata only across the local RPC bridge; public HTTP and WebMCP do not record it.
         const rpcBridge = validHostContext(data.trackingHost) && uuid.test(data.trackingContext);
+        const result = await invokePhase1WithTracking(store, context, new URL(editorUrl).origin, data, rpcBridge);
         const { _upgradeLinkResult, ...visible } = result;
         return json(res, 200, rpcBridge ? result : visible);
       }
       catch (error) {
         const message = error instanceof Error ? error.message : 'Tool failed';
         const { error_code, invalid_field, validation_rule } = toolFailureFields(error);
+        const settingsHandoff = (error as { settingsHandoff?: unknown })?.settingsHandoff;
         return json(res, 400, { error: message, ...(error_code !== 'TOOL_FAILED' ? { code: error_code } : {}),
           ...(invalid_field ? { invalid_field, validation_rule } : {}),
-          applied: (error as any)?.applied === false || /^(NATIVE_RUNTIME_NOT_READY|INVALID_|VERSION_CONFLICT|VERSION_NOT_RESTORABLE|VERSION_NOT_FOUND|PROJECT_NOT_|PROJECT_SESSION_|PROJECT_TRASHED|PROJECT_VALIDATION_FAILED|REQUEST_ID_CONFLICT|SESSION_NOT_FOUND|MCP_TOOL_NOT_EXPOSED|EXPORT_NOT_|TEMPLATE_NOT_|WORK_CLOSED|WORK_VERSION_MISMATCH|WORK_GENERATION_UNTRACKED|WORK_ID_CONFLICT|WORK_NOT_FOUND|GENERATION_CONTENT_UNCHANGED|GENERATION_ARTIFACT_INVALID|DUPLICATE_ITEM_ID|ITEM_ID_CONFLICT|DUPLICATE_FILE_PATH|CONFLICTING_FILE_PATHS|SOURCE_BATCH_TOO_LARGE|REVIEW_VERSION_MISMATCH|REVIEW_OBJECT_MISMATCH|PREVIEW_TARGET_MISMATCH)(?::|$)/.test(message) ? false : 'unknown' });
+          ...(settingsHandoff ? { settingsHandoff } : {}),
+          applied: (error as any)?.applied === false || /^(OPENDESIGN_SIGN_IN_REQUIRED|NATIVE_RUNTIME_NOT_READY|INVALID_|VERSION_CONFLICT|VERSION_NOT_RESTORABLE|VERSION_NOT_FOUND|PROJECT_NOT_|PROJECT_SESSION_|PROJECT_TRASHED|PROJECT_VALIDATION_FAILED|REQUEST_ID_CONFLICT|SESSION_NOT_FOUND|MCP_TOOL_NOT_EXPOSED|EXPORT_NOT_|TEMPLATE_NOT_|WORK_CLOSED|WORK_VERSION_MISMATCH|WORK_GENERATION_UNTRACKED|WORK_ID_CONFLICT|WORK_NOT_FOUND|GENERATION_CONTENT_UNCHANGED|GENERATION_ARTIFACT_INVALID|DUPLICATE_ITEM_ID|ITEM_ID_CONFLICT|DUPLICATE_FILE_PATH|CONFLICTING_FILE_PATHS|SOURCE_BATCH_TOO_LARGE|REVIEW_VERSION_MISMATCH|REVIEW_OBJECT_MISMATCH|PREVIEW_TARGET_MISMATCH)(?::|$)/.test(message) ? false : 'unknown' });
       }
     }
     if (req.method === 'GET' && ['/api/integration', '/connect/guide', '/connect/config'].includes(url.pathname)) {
@@ -1295,6 +1314,9 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
     }
     if (motionRequest && url.pathname.startsWith('/api/settings/')) {
       const gateway = gatewayFor(store, context.tracking);
+      if (!gateway.account.options.track && context.tracking) {
+        gateway.account.options.track = (record, host) => context.tracking?.track('account_sign_in_result', record, undefined, undefined, host);
+      }
       const agents = localAgentsFor(store.directory);
       if (url.pathname === '/api/settings/agents' && req.method === 'GET') return json(res, 200, await agents.list());
       if (url.pathname === '/api/settings/agents/check' && req.method === 'POST') return json(res, 200, await agents.warmup());
@@ -1344,12 +1366,33 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       }
       if (url.pathname === '/api/settings/account' && req.method === 'GET') return json(res, 200, await gateway.account.summary(url.searchParams.get('refresh') === 'true'));
       if (url.pathname === '/api/settings/account/login' && req.method === 'POST') {
-        return json(res, 200, await gateway.account.login(await accountAttribution(req)));
+        const attribution = await accountAttribution(req);
+        const rawHeader = req.headers['x-tracking-context'];
+        const trackingToken = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader)
+          ?? url.searchParams.get('tracking_context')
+          ?? url.searchParams.get('context')
+          ?? attribution.trackingContext;
+        const hostContext = resolveTrackingHost(context, trackingToken);
+        return json(res, 200, await gateway.account.login({
+          hookId: attribution.hookId,
+          entryId: attribution.entryId,
+          studioId: attribution.studioId,
+          modality: attribution.modality,
+          entryFrom: attribution.entryFrom,
+          ...(hostContext ? { hostContext } : {}),
+        }));
       }
       if (url.pathname === '/api/settings/account/cancel' && req.method === 'POST') return json(res, 200, await gateway.account.cancel());
       if (url.pathname === '/api/settings/account/logout' && req.method === 'POST') return json(res, 200, await gateway.account.logout());
       if (url.pathname === '/api/settings/account/subscription' && req.method === 'POST') {
-        return json(res, 200, await gateway.account.openSubscription(undefined, await accountAttribution(req)));
+        const attribution = await accountAttribution(req);
+        return json(res, 200, await gateway.account.openSubscription(undefined, {
+          hookId: attribution.hookId,
+          entryId: attribution.entryId,
+          studioId: attribution.studioId,
+          modality: attribution.modality,
+          entryFrom: attribution.entryFrom,
+        }));
       }
       return json(res, 404, { error: 'Settings endpoint not found' });
     }
@@ -1390,7 +1433,30 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       if (url.pathname === '/api/capabilities/run' && req.method === 'POST') {
         const body = await input(req);
         const isDryRun = body?.dryRun === true;
-        if (!isDryRun && !context.studio?.alive()) return json(res, 503, { error: 'Open the Studio before generating media' });
+        if (!isDryRun && !context.studio?.alive()) {
+          const cap = typeof body?.capabilityId === 'string' ? findCapability(body.capabilityId) : undefined;
+          const resolvedModality = isMediaTelemetryModality(cap?.modality)
+            ? cap.modality
+            : isMediaTelemetryModality(body?.modality) ? body.modality : undefined;
+          if (resolvedModality && cap?.executor.kind !== 'service') {
+            const { referenceCount, isEdit } = extractRequestReferenceMeta(body);
+            recordPreGatewayRejection(context.tracking, {
+              modality: resolvedModality,
+              executorKind: cap?.executor.kind === 'script' ? 'script' : 'gateway',
+              capabilityId: typeof body?.capabilityId === 'string' ? body.capabilityId : undefined,
+              spatialKind: spatialKindForCapability(cap?.id),
+              entrySurface: 'studio',
+              destination: 'library',
+              referenceCount,
+              isEdit,
+              hasIdempotencyKey: typeof body?.requestId === 'string' && body.requestId.length > 0,
+              parameters: body?.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters) ? body.parameters : undefined,
+              reason: 'STUDIO_NOT_OPEN',
+              category: 'runtime_unavailable',
+            });
+          }
+          return json(res, 503, { error: 'Open the Studio before generating media' });
+        }
         return json(res, isDryRun ? 200 : 202, await capabilityRun(store, { action: 'run', ...body }, context.tracking, 'gui'));
       }
       return json(res, 404, { error: 'Unknown capability center operation' });
@@ -1414,13 +1480,32 @@ export async function handler(req: IncomingMessage, res: ServerResponse, store =
       if (route && req.method === 'PUT') return json(res, 200, await gateway.setRoute(route[1], (await input(req)).model));
       if (url.pathname === '/api/models/custom' && req.method === 'POST') return json(res, 200, await gateway.registerModel(await input(req)));
       if (url.pathname === '/api/generations' && req.method === 'POST') {
-        if (!context.studio?.alive()) return json(res, 503, { error: 'Open the Studio before generating media' });
-        return json(res, 202, { job: await gateway.submit(await input(req)) });
+        if (!context.studio?.alive()) {
+          const body = await input(req).catch(() => undefined);
+          if (isMediaTelemetryModality(body?.modality)) {
+            const { referenceCount, isEdit } = extractRequestReferenceMeta(body);
+            recordPreGatewayRejection(context.tracking, {
+              modality: body.modality,
+              executorKind: 'gateway',
+              capabilityId: typeof body?.capabilityId === 'string' ? body.capabilityId : typeof body?.library?.capabilityId === 'string' ? body.library.capabilityId : undefined,
+              entrySurface: 'studio',
+              destination: body?.library ? 'library' : 'project',
+              referenceCount,
+              isEdit,
+              hasIdempotencyKey: typeof body?.idempotencyKey === 'string' && body.idempotencyKey.length > 0,
+              parameters: body?.parameters && typeof body.parameters === 'object' && !Array.isArray(body.parameters) ? body.parameters : undefined,
+              reason: 'STUDIO_NOT_OPEN',
+              category: 'runtime_unavailable',
+            });
+          }
+          return json(res, 503, { error: 'Open the Studio before generating media' });
+        }
+        return json(res, 202, { job: await gateway.submit(await input(req), undefined, { entrySurface: 'studio' }) });
       }
       if (url.pathname === '/api/generations' && req.method === 'GET') return json(res, 200, { jobs: (await gateway.listJobs(url.searchParams.get('projectId') ?? undefined)).slice(0, 50) });
       const generation = url.pathname.match(/^\/api\/generations\/([a-f0-9-]+)(\/cancel)?$/);
       if (generation && req.method === 'GET' && !generation[2]) return json(res, 200, { job: await gateway.getJob(generation[1]) });
-      if (generation && req.method === 'POST' && generation[2]) return json(res, 200, { job: await gateway.cancel(generation[1]) });
+      if (generation && req.method === 'POST' && generation[2]) return json(res, 200, { job: await gateway.cancel(generation[1], { source: 'studio' }) });
       return json(res, 404, { error: 'Unknown model gateway operation' });
     }
     if (url.pathname === '/api/templates' && req.method === 'GET') return json(res, 200, { templates });
@@ -1690,9 +1775,20 @@ export async function startServer(store = sharedStore, port = Number(process.env
       await listen(0);
     }
   } catch (error) { context.tracking?.close(); await context.studio?.close(); throw error; }
-  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const portInUse = (server.address() as { port: number }).port;
+  const origin = `http://127.0.0.1:${portInUse}`;
+  const localGamePreview = host === '127.0.0.1'
+    ? await startLocalGamePreview((store.workspaceStore ?? store).directory, runtimeRoot).catch(error => {
+      console.error('Isolated game previews could not start:', (error as Error).message);
+      return undefined;
+    })
+    : undefined;
+  if (localGamePreview) {
+    context.localGamePreview = localGamePreview.url;
+    server.once('close', localGamePreview.close);
+  }
   const gateway = gatewayFor(store, context.tracking);
-  gateway.account.options.track = record => context.tracking?.track('account_sign_in_result', record);
+  gateway.account.options.track = (record, host) => context.tracking?.track('account_sign_in_result', record, undefined, undefined, host);
   // `node --test` runs use synthetic connectors; skip the real installation there. Closing the service stops an unfinished one.
   if (!process.env.NODE_TEST_CONTEXT) gateway.account.prefetch();
   let warmupTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1790,7 +1886,12 @@ export async function startServer(store = sharedStore, port = Number(process.env
       server.closeAllConnections();
       server.close();
       await context.studio?.close();
-      await Promise.allSettled([closeTracking(context.tracking), flushCodexSessionTracking(store.directory)]);
+      await Promise.allSettled([
+        closeTracking(context.tracking),
+        flushCodexSessionTracking(store.directory),
+        flushHostSessionTracking(store.directory),
+        flushSuperAgentSessionTracking(store.directory),
+      ]);
     },
   };
 }

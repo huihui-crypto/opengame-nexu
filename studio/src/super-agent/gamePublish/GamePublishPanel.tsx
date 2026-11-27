@@ -6,13 +6,13 @@ import { useAccountSummary } from '../../motion/AccountSettings';
 import { BLACK_FRIDAY_CAMPAIGN, campaignPricingUrl, newCampaignEntryId, useBlackFridayActive } from '../../motion/campaignAttribution';
 import { readAccountPlan, useCheckoutReturnRefresh } from '../../motion/entitlementAttribution';
 import { reportEntitlementGateClick, reportEntitlementGateView } from '../../motion/pageTracking';
-import { gamePublishActions, useGamePublishSession, type GamePublishSession } from './gamePublishStore';
+import { gamePublishActions, useGamePublishSession, type GamePublishChooseOptions, type GamePublishSession } from './gamePublishStore';
 import { GamePublishResultAction } from './GamePublishThread';
 import { ENABLED_PUBLISH_PLATFORMS, GAME_PUBLISH_PLATFORMS, gamePublishPlatform, type GamePublishPlatform, type GamePublishPlatformId } from './platforms';
 import { ChoiceTiles } from '../../components/ui/ChoiceTiles';
 import { PlatformIcon } from '../../../../packages/design-system/react/PlatformIcon';
 import { CompactLink, WechatProgress } from './WechatProgress';
-import { PlatformProgress } from './PlatformStepControls';
+import { PlatformInlineControls, PlatformProgress } from './PlatformStepControls';
 import { useOpenDesignPublishSignIn } from './useOpenDesignPublishSignIn';
 import './gamePublish.css';
 
@@ -23,9 +23,10 @@ type Notify = (message: string, tone?: 'info' | 'error') => void;
  * Fixed position and height; one step at a time. Real work (OpenDesign link, packages) reports
  * its real result; console steps record what the user says they did.
  */
-export function GamePublishPanel({ artifactId, coverUrl, onNotify }: {
+export function GamePublishPanel({ artifactId, coverUrl, onChooseDouyin, onNotify }: {
   artifactId: string;
   coverUrl?: string;
+  onChooseDouyin?: (artifactId: string, options: GamePublishChooseOptions) => void;
   onNotify?: Notify;
 }) {
   const { t } = useI18n();
@@ -75,11 +76,9 @@ export function GamePublishPanel({ artifactId, coverUrl, onNotify }: {
       ]}
       onChange={id => {
         if (!id) return;
-        if (!account && !accountError) {
-          gamePublishActions.choose(artifactId, id, { deferLink: true });
-          return;
-        }
-        gamePublishActions.choose(artifactId, id, { signedIn: account?.state === 'signed-in' });
+        const options = !account && !accountError ? { deferLink: true } : { signedIn: account?.state === 'signed-in' };
+        if (id === 'douyin-minigame' && onChooseDouyin) onChooseDouyin(artifactId, options);
+        else gamePublishActions.choose(artifactId, id, options);
       }}
     />
   );
@@ -116,11 +115,13 @@ export function GamePublishPanel({ artifactId, coverUrl, onNotify }: {
       </>
     );
   } else {
-    // Non-WeChat platforms render self-contained step cards in the publish thread; the panel tracks live step progress.
+    // Without a conversation, the same step controls stay beside the game preview.
     head = header(t(platform.name), { label: t('Platforms'), onClick: () => gamePublishActions.showList(artifactId) });
     body = (
       <>
+        {!session.chatId && <PlatformInlineControls session={session} onNotify={onNotify} />}
         <PlatformProgress session={session} />
+        {!session.chatId && session.linkUrl && <CompactLink url={session.linkUrl} onNotify={onNotify} />}
         {session.view === 'result' && <GamePublishResultAction action={platform.resultAction} href={platform.resultHref} />}
       </>
     );
@@ -154,7 +155,7 @@ export function GamePublishPanel({ artifactId, coverUrl, onNotify }: {
  */
 function OpenDesignChoice({ session, onNotify }: { session: GamePublishSession; onNotify?: Notify }) {
   const { locale, t } = useI18n();
-  const { account, signedIn, authorizing, signingIn, startSignIn: startPanelSignIn } = useOpenDesignPublishSignIn(session.artifactId, onNotify);
+  const { account, signedIn, authorizing, signingIn, startSignIn: startPanelSignIn } = useOpenDesignPublishSignIn(session.artifactId, onNotify, 'game_publish_panel_signin', false);
   const campaign = useBlackFridayActive();
   const [upgradeEntryId, setUpgradeEntryId] = useState(newCampaignEntryId);
   const markCheckoutReturn = useCheckoutReturnRefresh('creative_studio', 'game_publish_unlisted_upgrade');
@@ -196,7 +197,7 @@ function OpenDesignChoice({ session, onNotify }: { session: GamePublishSession; 
     window.setTimeout(() => setUpgradeEntryId(newCampaignEntryId()), 0);
   }
 
-  const upgradeHref = campaignPricingUrl(locale, 'opengame_publish_unlisted', upgradeEntryId);
+  const upgradeHref = campaignPricingUrl(locale, 'opengame_publish_unlisted', upgradeEntryId, { studioId: 'game', modality: 'all' });
 
   return (
     <div className="om-gp-od-block">

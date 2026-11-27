@@ -24,6 +24,7 @@ import { injectPreviewBridgeHtml, isValidPreviewBridgeToken } from './shared/pre
 import { DESIGN_DECK_INACTIVE_ATTRIBUTE, DESIGN_DECK_ISOLATION_CSS, DESIGN_DECK_SLIDE_SELECTOR } from './shared/design-deck-bridge.ts';
 import { designCatalog } from './shared/design-catalog.ts';
 import { designDeployFor } from './gateway/design-deploy.ts';
+import { buildMediaSettingsHandoff } from './gateway/media-use.ts';
 import {
   designEditorHref, designExportFormats, designRoutes, designScenarios, findDesignScenario, isDesignScenario,
   type DesignComment, type DesignCommentAnchor, type DesignDeployMode, type DesignEditorApp, type DesignExportFormat,
@@ -2405,6 +2406,14 @@ export async function dispatchDesignTool(
             name: args.title,
           });
         } catch (error) {
+          const raw = error instanceof Error ? error.message : String(error);
+          if (raw.startsWith('OPENDESIGN_SIGN_IN_REQUIRED') || (error as { code?: unknown })?.code === 'OPENDESIGN_SIGN_IN_REQUIRED') {
+            throw Object.assign(error instanceof Error ? error : new Error(raw), {
+              code: 'OPENDESIGN_SIGN_IN_REQUIRED',
+              applied: false,
+              settingsHandoff: buildMediaSettingsHandoff('agent_design_deploy_signed_out'),
+            });
+          }
           mapDeployError(error);
         }
       }

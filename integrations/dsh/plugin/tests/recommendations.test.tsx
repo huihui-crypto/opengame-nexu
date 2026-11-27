@@ -19,7 +19,7 @@ const details: RecommendationDetails = {
 function mount(value: RecommendationDetails, actCard = vi.fn().mockResolvedValue({ status: "settled" })) {
   configureStudio("http://localhost:4173");
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  act(() => root!.render(<TemplateRecommendationCard proposal={{ details: value }} act={actCard} />));
+  act(() => root!.render(<TemplateRecommendationCard proposal={{ details: value }} act={actCard} openGame={vi.fn()} />));
   return actCard;
 }
 it("shows the shared Chinese onboarding with cover previews and separate template choices", async () => {
@@ -96,6 +96,31 @@ it("does not reopen the library over a user's later editor when an old installat
   await act(async () => root!.render(React.createElement(Body!, { proposal: { callId: 'previous-call', details }, act: vi.fn() })));
   expect(openTab).not.toHaveBeenCalled();
   localStorage.removeItem('omd-onboarding:previous-call');
+});
+
+it('opens explicit and existing OpenGame HTML previews in the native browser bar', async () => {
+  const { registerTemplateRecommendationBody } = await import('../src/client');
+  let Body: React.ComponentType<any> | undefined;
+  const openTab = vi.fn(), actCard = vi.fn();
+  registerTemplateRecommendationBody({ effect: (run: () => unknown) => run(),
+    actionCards: { register: (registration: any) => { Body = registration.Body; return () => {}; } }, sidebarRight: { openTab } });
+  const game = 'http://127.0.0.1:4173/api/games/tidebreaker/play/index.html?level=1';
+  const templates = [{ id: 'game', title: 'Tidebreaker', playUrl: game, previewUrl: 'https://example.test/trailer.mp4' },
+    { id: 'legacy', title: 'Older card', previewUrl: game }, { id: 'video', title: 'Video', previewUrl: 'https://example.test/video.mp4' }];
+  const container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+  await act(async () => root!.render(React.createElement(Body!, { proposal: { details: { templates } }, act: actCard })));
+  const buttons = document.querySelectorAll<HTMLButtonElement>('.omd-recommendation-cover');
+  expect(document.querySelectorAll('.omd-recommendation-cover video')).toHaveLength(1);
+  await act(async () => buttons[0].click());
+  await act(async () => buttons[1].click());
+  expect(openTab.mock.calls).toEqual([
+    ['browser', { params: { url: game } }], ['browser', { params: { url: game } }],
+  ]);
+  expect(document.querySelector('dialog')?.open).toBe(false);
+  await act(async () => buttons[2].click());
+  expect(document.querySelector('dialog video')?.getAttribute('src')).toBe('https://example.test/video.mp4');
+  expect(openTab).toHaveBeenCalledTimes(2);
+  expect(actCard).not.toHaveBeenCalled();
 });
 
 it("restores the library after refresh when DSH does not persist tab navigation parameters", async () => {

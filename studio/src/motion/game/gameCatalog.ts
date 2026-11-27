@@ -1,5 +1,6 @@
 import { compareGameCatalogOrder, gameGenreLabels, gameGenres, gameSettings, gameStyles, type GameBrief, type GameCard, type GameCatalog, type GameCreated, type GameGenre, type GameRemixOptions, type GameSetting, type GameStyle, type GameTrailer, type GameHandoff } from '../../../../shared/game-contract';
 import { motionApi } from '../useWorkspace';
+import { isLocalGamePreviewUrl } from '../../../../shared/local-game-preview';
 
 export const genreLabels: Record<GameGenre, string> = gameGenreLabels;
 export const styleLabels: Record<GameStyle, string> = { pixel: 'Pixel art', minimal: 'Minimalist', ascii: 'ASCII art', voxel: 'Voxel', anime: 'Anime', '3d': '3D' };
@@ -92,7 +93,8 @@ export function storedInstruction(id: string): string | null {
 }
 
 /** Links that only open on this computer must not be presented as shareable. */
-export const isLocalOnly = (url: string) => url.startsWith('blob:') || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/.test(new URL(url, location.href).href);
+export const isLocalOnly = (url: string) => url.startsWith('blob:') || isLocalGamePreviewUrl(url)
+  || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/.test(new URL(url, location.href).href);
 
 // Option artwork generated for OpenMotion (one consistent set for genres, styles and settings).
 const optionArt = import.meta.glob('./art/*.webp', { eager: true, query: '?url', import: 'default' }) as Record<string, string>;
@@ -112,6 +114,24 @@ export const bundledGames: GameCard[] = Object.entries(bundledMeta).map(([path, 
 /** A bundled page that loads sibling files (./assets/..., ./src/..., ./app.part0.js) cannot run from a blob URL. */
 export const needsGameService = (html: string) => /["'(]\.?\/?(?:assets|src)\/|["']\.\/[^"']+\.(?:js|css|json|wasm)\b|<(?:script|link)\b[^>]+(?:src|href)=["'](?!https?:|data:|blob:|#)/i.test(html);
 
+export function isIsolatedGameFrame(url: string | null): boolean {
+  return Boolean(url && isLocalGamePreviewUrl(url) && new URL(url).origin !== window.location.origin);
+}
+
+export async function resolveGameFrameUrl(id: string, path: string) {
+  try {
+    const { url } = await motionApi<{ url: string | null }>(`/games/${encodeURIComponent(id)}/preview-url`);
+    if (url && isIsolatedGameFrame(url)) {
+      const preview = new URL(url);
+      const original = new URL(path, window.location.href);
+      preview.search = original.search;
+      preview.hash = original.hash;
+      return preview.href;
+    }
+  } catch { /* Older or offline Studio servers still have the default sandbox. */ }
+  return path;
+}
+
 /** Resolve a playable URL. Service URLs go through the Studio proxy; bundled pages become blob URLs. */
 export async function playableUrl(game: GameCard) {
   if (game.external) return game.external.url;
@@ -122,7 +142,8 @@ export async function playableUrl(game: GameCard) {
     if (needsGameService(html)) throw new Error('Start the local game service to play this template.');
     return URL.createObjectURL(new Blob([html], { type: 'text/html' }));
   }
-  return game.playUrl.replace(/^\/api\//, '/motion-api/');
+  const path = game.playUrl.replace(/^\/api\//, '/motion-api/');
+  return game.source === 'template' && !game.multiplayer ? resolveGameFrameUrl(game.id, path) : path;
 }
 
 /** The game's entry HTML, shown in the project view's code tab. */

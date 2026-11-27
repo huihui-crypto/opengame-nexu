@@ -4,6 +4,7 @@ import { findLandingScene, findMediaStudio, findTechniqueStudio } from './studio
 export const providerSetupEntries = [
   'agent_providers', 'agent_media_signed_out', 'agent_media_upgrade_free', 'agent_media_upgrade_go',
   'agent_media_balance_low', 'agent_media_key_rejected', 'agent_media_handbook',
+  'agent_game_publish_signed_out', 'agent_design_deploy_signed_out',
 ] as const;
 export type ProviderSetupEntry = typeof providerSetupEntries[number];
 
@@ -69,7 +70,14 @@ function workspacePagePreview(origin: string, target: 'templates' | 'providers' 
   const query = new URLSearchParams(target === 'templates' ? { templates: '1' } : undefined);
   if (target === 'providers') {
     const entry = resolveProviderSetupEntry(options.entry);
-    if (entry === 'agent_media_signed_out' || entry === 'agent_media_upgrade_free' || entry === 'agent_media_upgrade_go' || entry === 'agent_media_balance_low') {
+    if (
+      entry === 'agent_media_signed_out'
+      || entry === 'agent_media_upgrade_free'
+      || entry === 'agent_media_upgrade_go'
+      || entry === 'agent_media_balance_low'
+      || entry === 'agent_game_publish_signed_out'
+      || entry === 'agent_design_deploy_signed_out'
+    ) {
       query.set('provider', 'account');
     }
     if (options.attributeEntry !== false) query.set('entry_from', entry);

@@ -70,6 +70,7 @@ export type RouteViewportProps = {
   selectedCinemaTemplate?: CinemaTemplate;
   connectionEntry: McpEntry;
   studioVisit: number;
+  agentHomeVisit: number;
   studioDrafts: RefObject<Map<string, AssetDraft>>;
   skillBriefs: RefObject<Map<string, SkillParameters>>;
   libraryTrigger: RefObject<HTMLElement | null>;
@@ -114,6 +115,7 @@ export function RouteViewport({
   selectedCinemaTemplate,
   connectionEntry,
   studioVisit,
+  agentHomeVisit,
   studioDrafts,
   skillBriefs,
   libraryTrigger,
@@ -490,6 +492,7 @@ export function RouteViewport({
           <LazySuperAgentWorkspace
             active={unifiedSuperAgentActive}
             chatId={gameStudioActive ? null : page.superAgentChat}
+            homeVisit={agentHomeVisit}
             requestedMode={gameStudioActive ? 'game' : (page.superAgentMode ?? null)}
             requestedDesignModule={gameStudioActive ? null : (page.superAgentDesignModule ?? null)}
             requestedGameId={gameStudioActive ? (page.gameId ?? null) : null}

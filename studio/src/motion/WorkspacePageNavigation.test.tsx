@@ -2190,3 +2190,15 @@ it('surfaces Game Studio in the Explore spotlight carousel and featured showcase
   expect(page().superAgent).toBe(true);
   expect(location.pathname).toBe('/agent');
 });
+
+it('returns to the Agent home when the top navigation is clicked from Game mode', async () => {
+  history.replaceState(null, '', '/agent');
+  await mount();
+
+  await act(async () => container.querySelector<HTMLButtonElement>('.om-sa-game-feature')!.click());
+  expect(container.querySelector('.om-sa-stream')?.getAttribute('data-mode')).toBe('game');
+
+  await click('Super Agent');
+  expect(location.pathname + location.search).toBe('/agent');
+  expect(container.querySelector('.om-sa-home')).not.toBeNull();
+});

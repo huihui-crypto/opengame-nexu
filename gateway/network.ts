@@ -4,9 +4,56 @@ import { isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import type { Modality } from '../shared/gateway.ts';
 
+export type ErrorSource = 'api' | 'storage' | 'download' | 'local';
 export class ProviderError extends Error {
   status?: number;
-  constructor(message: string, status?: number) { super(message); this.status = status; }
+  upstreamCode?: string;
+  errorSource?: ErrorSource;
+  constructor(message: string, status?: number, upstreamCode?: string, errorSource: ErrorSource = 'api') {
+    super(message);
+    this.status = status;
+    this.upstreamCode = upstreamCode;
+    this.errorSource = errorSource;
+  }
+}
+export type ErrorTelemetryMeta = { status?: number; upstreamCode?: string; errorSource?: ErrorSource };
+const upstreamCodePattern = /^[A-Za-z0-9_-]{1,64}$/;
+/** Validate a bounded structured upstream error code for telemetry attribution. */
+export function boundedUpstreamCode(raw: unknown): string | undefined {
+  return typeof raw === 'string' && upstreamCodePattern.test(raw) ? raw : undefined;
+}
+/** Extract a bounded structured error code from a non-2xx JSON response without forwarding raw provider text. */
+export async function readUpstreamErrorCode(response: Response, maxBytes = 65_536): Promise<string | undefined> {
+  try {
+    const errBody = JSON.parse(await readCappedText(response, maxBytes)) as {
+      error?: string | { code?: unknown; error_code?: unknown };
+      code?: unknown;
+      error_code?: unknown;
+    };
+    const errorObj = typeof errBody?.error === 'object' && errBody.error ? errBody.error : undefined;
+    return boundedUpstreamCode(errBody?.error)
+      ?? boundedUpstreamCode(errorObj?.code)
+      ?? boundedUpstreamCode(errorObj?.error_code)
+      ?? boundedUpstreamCode(errBody?.error_code)
+      ?? boundedUpstreamCode(errBody?.code);
+  } catch {
+    /* Non-JSON or oversized error responses simply omit upstreamCode. */
+    return undefined;
+  }
+}
+/** Attach bounded HTTP status / structured upstream code to an Error without changing its user-facing message. */
+export function withErrorMeta<T extends Error>(error: T, meta: ErrorTelemetryMeta): T {
+  if (meta.status !== undefined && Number.isInteger(meta.status) && meta.status >= 100 && meta.status <= 599) {
+    (error as T & { status?: number }).status = meta.status;
+  }
+  const code = boundedUpstreamCode(meta.upstreamCode);
+  if (code) {
+    (error as T & { upstreamCode?: string }).upstreamCode = code;
+  }
+  if (meta.errorSource) {
+    (error as T & { errorSource?: ErrorSource }).errorSource = meta.errorSource;
+  }
+  return error;
 }
 export type Fetcher = typeof fetch;
 /** Repeat a read-only request (task polling or media download) after transient failures; never used for paid submissions. */
@@ -38,7 +85,11 @@ export async function apiJson(fetcher: Fetcher, url: string, init: RequestInit =
     : fetcher;
   const response = await bounded(url, { ...init, redirect: 'error', signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(limits.timeoutMs ?? 30_000)]) : AbortSignal.timeout(limits.timeoutMs ?? 15_000) });
   // Do not forward provider response text: it may echo a key or user input.
-  if (!response.ok) throw new ProviderError(`Provider HTTP ${response.status}${response.status === 401 || response.status === 403 ? ': credentials or permissions rejected' : ''}`, response.status);
+  // Extract only a bounded structured error code from JSON envelopes for telemetry attribution.
+  if (!response.ok) {
+    const upstreamCode = await readUpstreamErrorCode(response);
+    throw new ProviderError(`Provider HTTP ${response.status}${response.status === 401 || response.status === 403 ? ': credentials or permissions rejected' : ''}`, response.status, upstreamCode, 'api');
+  }
   const body = await readCappedText(response, maxBytes);
   try { return JSON.parse(body); } catch { throw new Error('Provider returned invalid JSON'); }
 }
@@ -256,7 +307,7 @@ export async function downloadMedia(raw: string, signal: AbortSignal, redirects 
         downloadMedia(new URL(res.headers.location, url).href, signal, redirects + 1).then(resolve, reject); return;
       }
       // Status is kept for retry decisions; this is not a provider credential rejection.
-      if (res.statusCode !== 200) { res.resume(); reject(Object.assign(new Error(`Media download HTTP ${res.statusCode}`), { status: res.statusCode })); return; }
+      if (res.statusCode !== 200) { res.resume(); reject(withErrorMeta(new Error(`Media download HTTP ${res.statusCode}`), { status: res.statusCode, errorSource: 'download' })); return; }
       if (Number(res.headers['content-length'] || 0) > MAX_MEDIA_BYTES) { res.destroy(); reject(new Error('Generated media exceeds 256 MB')); return; }
       const chunks: Buffer[] = []; let size = 0;
       res.on('data', (chunk: Buffer) => { size += chunk.length; if (size > MAX_MEDIA_BYTES) res.destroy(new Error('Generated media exceeds 256 MB')); else chunks.push(chunk); });

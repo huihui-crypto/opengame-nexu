@@ -159,3 +159,24 @@ it('exposes safe queue and delivery statuses while rejecting private or non-Stud
   expect(await tracking.flushMotionTracking()).toBe('disabled');
   expect(tracking.getMotionTrackingStatus().pending).toBe(0);
 });
+
+it('auto-injects global signed_in context on events declaring signed_in without overwriting explicit values', async () => {
+  const bodies: Array<{ events: Array<{ event: string; properties: Record<string, unknown> }> }> = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init?: RequestInit) => {
+    if (init?.body) bodies.push(JSON.parse(String(init.body)));
+    return Response.json({ enabled: true });
+  }));
+  const tracking = await import('./tracking');
+  tracking.setMotionSignedIn(true);
+  expect(await tracking.trackMotion('ui_click', click)).toBe('queued');
+  expect(await tracking.trackMotion('surface_view', { page_name: 'explore', area: 'campaign_banner', element: 'banner' })).toBe('queued');
+  expect(await tracking.trackMotion('ui_click', { ...click, signed_in: false })).toBe('queued');
+  expect(await tracking.trackMotion('entitlement_refresh_result', { page_name: 'studio', outcome: 'success', plan_changed: false })).toBe('queued');
+  expect(await tracking.flushMotionTracking()).toBe('accepted');
+  const events = bodies[0].events;
+  expect(events[0].properties.signed_in).toBe(true);
+  expect(events[1].properties.signed_in).toBe(true);
+  expect(events[2].properties.signed_in).toBe(false);
+  expect('signed_in' in events[3].properties).toBe(false);
+  tracking.setMotionSignedIn(undefined);
+});

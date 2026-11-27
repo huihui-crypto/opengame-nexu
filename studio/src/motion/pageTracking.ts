@@ -146,7 +146,8 @@ export function reportMcpCopyResult(kind: McpCopyKind, status: 'clipboard_writte
 const assetsPage = { page_name: 'assets' } as const;
 type AssetClickArea = Extract<Click['area'], `asset${string}`>;
 export type AssetKindField = NonNullable<Click['asset_kind']>;
-export type Modality = NonNullable<Click['modality']>;
+export type Modality = Fields<'asset_generation_submit_result'>['modality'];
+export type AttributionModality = NonNullable<Click['modality']>;
 const MODALITIES: readonly string[] = ['image', 'video', 'audio'];
 /** A media type from the library; anything unexpected is left out. */
 export const modalityField = (value: unknown) => typeof value === 'string' && MODALITIES.includes(value) ? { modality: value as Modality } : {};
@@ -211,34 +212,35 @@ export function reportSettingsPageView(section: SettingsSectionField, hasProject
   send('page_view', { ...settingsPage, ...shell(hasProject), settings_section: section, ...(entry ? { entry_from: entry } : {}) });
 }
 export function reportSettingsClick(area: SettingsClickArea, element: Click['element'],
-  fields: Pick<Click, 'settings_section' | 'expanded' | 'position' | 'hook_id' | 'entry_id'> & { provider?: { id: string; custom?: boolean; protocol?: string }; agent?: string } = {}) {
+  fields: Pick<Click, 'settings_section' | 'expanded' | 'position' | 'hook_id' | 'entry_id' | 'studio_id' | 'modality'> & { provider?: { id: string; custom?: boolean; protocol?: string }; agent?: string } = {}) {
   const { provider, agent, ...rest } = fields;
   const entry = settingsEntryFrom();
   send('ui_click', { ...settingsPage, area, element, ...rest, ...(entry ? { entry_from: entry } : {}), ...(provider ? providerFields(provider) : {}), ...slugField('agent_id', agent) });
 }
 export function reportEntitlementGateView(page: NonNullable<Fields<'surface_view'>['page_name']>, hookId: EntitlementHookId,
-  extra: Pick<Fields<'surface_view'>, 'publish_target' | 'studio_id' | 'entry_id' | 'campaign_id'> = {}) {
+  extra: Pick<Fields<'surface_view'>, 'publish_target' | 'studio_id' | 'modality' | 'entry_id' | 'campaign_id'> = {}) {
   send('surface_view', { page_name: page, area: 'entitlement_gate', element: 'gate_card', hook_id: hookId, ...extra });
 }
 export function reportEntitlementModalView(page: NonNullable<Fields<'surface_view'>['page_name']>, hookId: EntitlementHookId,
-  extra: Pick<Fields<'surface_view'>, 'studio_id' | 'entry_id' | 'campaign_id' | 'game_id'> = {}) {
+  extra: Pick<Fields<'surface_view'>, 'studio_id' | 'modality' | 'entry_id' | 'campaign_id' | 'game_id'> = {}) {
   send('surface_view', { page_name: page, area: 'entitlement_modal', element: 'modal', hook_id: hookId, ...extra });
 }
 export function reportEntitlementModalClick(page: NonNullable<Fields<'ui_click'>['page_name']>,
   element: Extract<Click['element'], 'open_pricing' | 'close_modal' | 'check_balance' | 'start_sign_in'>,
   hookId: EntitlementHookId,
-  extra: Pick<Click, 'entry_id' | 'studio_id' | 'campaign_id' | 'game_id' | 'publish_target'> = {}) {
+  extra: Pick<Click, 'entry_id' | 'studio_id' | 'modality' | 'campaign_id' | 'game_id' | 'publish_target'> = {}) {
   send('ui_click', { page_name: page, area: 'entitlement_modal', element, hook_id: hookId, ...extra });
 }
 export function reportEntitlementGateClick(page: NonNullable<Fields<'ui_click'>['page_name']>,
   element: Extract<Click['element'], 'open_pricing' | 'start_sign_in'>,
   hookId: EntitlementHookId,
-  extra: Pick<Click, 'entry_id' | 'studio_id' | 'campaign_id' | 'publish_target'> = {}) {
+  extra: Pick<Click, 'entry_id' | 'studio_id' | 'modality' | 'campaign_id' | 'publish_target'> = {}) {
   send('ui_click', { page_name: page, area: 'entitlement_gate', element, hook_id: hookId, ...extra });
 }
 export function reportEntitlementRefresh(page: NonNullable<Fields<'entitlement_refresh_result'>['page_name']>,
-  hookId: EntitlementHookId, entryId: string | undefined, outcome: 'success' | 'failure', planChanged: boolean) {
-  send('entitlement_refresh_result', { page_name: page, hook_id: hookId, ...(entryId ? { entry_id: entryId } : {}), outcome, plan_changed: planChanged });
+  hookId: EntitlementHookId, entryId: string | undefined, outcome: 'success' | 'failure', planChanged: boolean,
+  extra: Pick<Fields<'entitlement_refresh_result'>, 'studio_id' | 'modality' | 'entry_from'> = {}) {
+  send('entitlement_refresh_result', { page_name: page, hook_id: hookId, ...(entryId ? { entry_id: entryId } : {}), ...extra, outcome, plan_changed: planChanged });
 }
 export function reportProviderSetting(provider: { id: string; custom?: boolean; protocol?: string }, action: ProviderAction, outcome: 'success' | 'failure') {
   send('provider_setting_result', { ...settingsPage, ...providerFields(provider), action, outcome });

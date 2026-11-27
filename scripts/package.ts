@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { distributionFiles, requireDownloadedMedia } from './distribution.ts';
+import { resolveNodeProductId } from '../shared/product-identity.ts';
 import { zip } from './zip.mjs';
 export { zip } from './zip.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -65,7 +66,7 @@ async function main() {
   try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
   catch { commit = JSON.parse(await readFile(path.join(root, 'shared/build-info.json'), 'utf8')).commit; }
   const overrides: Record<string, unknown> = { 'shared/mcp-release.json': { profile }, 'shared/template-config.json': templateConfig,
-    'shared/build-info.json': { commit } };
+    'shared/build-info.json': { commit, product: resolveNodeProductId() } };
   const entries = await Promise.all(files.sort().map(async file => ({ name: manifest.name + '/' + file,
     data: overrides[file] ? Buffer.from(JSON.stringify(overrides[file], null, 2) + '\n') : await readFile(path.join(root, file)) })));
   for (const entry of await packageModernMcpSdk()) entries.push({ ...entry, name: manifest.name + '/' + entry.name });

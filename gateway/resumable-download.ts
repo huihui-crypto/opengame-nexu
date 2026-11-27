@@ -3,7 +3,7 @@ import { open, rename, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { MAX_MEDIA_BYTES, streamMedia } from './network.ts';
+import { MAX_MEDIA_BYTES, streamMedia, withErrorMeta } from './network.ts';
 
 export type DownloadProgress = { assetId: string; receivedBytes: number; totalBytes: number };
 export type DownloadAsset = { assetId: string; size: number; mime: string; url: string };
@@ -25,10 +25,11 @@ export async function resumableDownload(directory: string, resolve: () => Promis
       catch { /* Invalid checkpoint is discarded below. */ } finally { await record.close(); }
     }
     for (let attempt = 0; attempt < attempts; attempt++) {
+      let attemptStatus: number | undefined;
       signal.throwIfAborted();
       // Also refresh expired signed URLs and recheck account/task identity on every attempt.
       const asset = await resolve();
-      if (!asset.assetId || !Number.isSafeInteger(asset.size) || asset.size < 24 || asset.size > MAX_MEDIA_BYTES || !asset.mime.startsWith(allowedMimePrefix)) throw new Error(downloadInterrupted);
+      if (!asset.assetId || !Number.isSafeInteger(asset.size) || asset.size < 24 || asset.size > MAX_MEDIA_BYTES || !asset.mime.startsWith(allowedMimePrefix)) throw withErrorMeta(new Error(downloadInterrupted), { errorSource: 'download' });
       let bytes = 0, hash = createHash('sha256');
       if (checkpoint?.assetId === asset.assetId && checkpoint.size === asset.size && checkpoint.mime === asset.mime
         && Number.isSafeInteger(checkpoint.bytes) && checkpoint.bytes > 0 && checkpoint.bytes <= asset.size && (await file.stat()).size >= checkpoint.bytes) {
@@ -57,10 +58,14 @@ export async function resumableDownload(directory: string, resolve: () => Promis
         await report();
         response = await transport(asset.url, { signal, headers: { 'Accept-Encoding': 'identity', ...(bytes ? { Range: `bytes=${bytes}-`, 'If-Range': etag! } : {}) } });
         if (response.status === 416 && bytes) {
+          attemptStatus = response.status;
           bytes = 0; hash = createHash('sha256'); etag = undefined; await file.truncate(0);
-          throw new Error(downloadInterrupted);
+          throw withErrorMeta(new Error(downloadInterrupted), { status: response.status, errorSource: 'download' });
         }
-        if (response.status !== 200 && response.status !== 206) throw new Error(downloadInterrupted);
+        if (response.status !== 200 && response.status !== 206) {
+          attemptStatus = response.status;
+          throw withErrorMeta(new Error(downloadInterrupted), { status: response.status, errorSource: 'download' });
+        }
         const nextEtag = response.headers.get('etag') ?? undefined;
         let expected = asset.size;
         if (response.status === 206) {
@@ -92,13 +97,15 @@ export async function resumableDownload(directory: string, resolve: () => Promis
         await save();
         if (bytes !== asset.size) throw new Error(downloadInterrupted);
         return await file.readFile();
-      } catch {
+      } catch (err) {
+        const errStatus = (err as { status?: number })?.status;
+        if (typeof errStatus === 'number') attemptStatus = errStatus;
         await response?.body?.cancel().catch(() => {});
         await save(); signal.throwIfAborted();
-        if (attempt + 1 === attempts) throw new Error(downloadInterrupted);
+        if (attempt + 1 === attempts) throw withErrorMeta(new Error(downloadInterrupted), { status: attemptStatus, errorSource: 'download' });
         await delay(500 * (attempt + 1), undefined, { signal });
       }
     }
-    throw new Error(downloadInterrupted);
+    throw withErrorMeta(new Error(downloadInterrupted), { errorSource: 'download' });
   } finally { await file.close(); }
 }

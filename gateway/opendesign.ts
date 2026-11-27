@@ -4,7 +4,7 @@ import type { Model } from '../shared/gateway.ts';
 import { isSfxModel } from '../shared/audio-kind.ts';
 import { openDesignImageReferenceCap } from '../shared/opendesign-models.ts';
 import { resolveGenerationParameters } from '../shared/generation-options.ts';
-import { apiJson, publicProviderFetch, ProviderError, retryRead, type Fetcher } from './network.ts';
+import { apiJson, publicProviderFetch, ProviderError, retryRead, withErrorMeta, type Fetcher } from './network.ts';
 import type { ProviderAdapter, ProviderContext } from './providers.ts';
 
 export const productionApi = 'https://amr-api.open-design.ai';
@@ -119,7 +119,7 @@ export async function uploadInputs(fetcher: Fetcher, api: string, headers: Recor
     if (typeof created.asset_id !== 'string' || !/^[a-zA-Z0-9_-]{1,180}$/.test(created.asset_id) || typeof created.upload_url !== 'string' || !created.upload_url.startsWith('https://')) throw new Error('OpenDesign Cloud did not return an upload target');
     const put = await fetcher(created.upload_url, { method: 'PUT', headers: { 'Content-Type': input.mimeType, 'Content-Length': String(bytes.length) }, body: bytes, redirect: 'error', signal: ctx.signal });
     // Storage, not the API key, rejected this presigned PUT; do not report it as a credential failure.
-    if (!put.ok) throw new Error(`OpenDesign Cloud reference upload storage HTTP ${put.status}; the job was not submitted`);
+    if (!put.ok) throw withErrorMeta(new Error(`OpenDesign Cloud reference upload storage HTTP ${put.status}; the job was not submitted`), { status: put.status, errorSource: 'storage' });
     const committed = await apiJson(fetcher, api + `/uploads/${created.asset_id}/commit`, { method: 'POST', headers: { ...headers, 'Idempotency-Key': `${jobId}-commit-${index}` }, body: '{}', signal: ctx.signal });
     if (committed.status !== 'ready') throw new Error('OpenDesign Cloud did not accept the reference image');
     ids.push(created.asset_id);
@@ -141,14 +141,23 @@ export const opendesign: ProviderAdapter = {
       const parameters = resolveGenerationParameters(job.model, job.parameters, !!ctx.references?.length);
       const { voice, ...audioOptions } = parameters;
       if (speech && (typeof voice !== 'string' || !voice.trim())) throw new Error('Choose a provider voice ID in parameters.voice');
+      if (audio && !speech && !soundEffects && !job.prompt.trim()) throw new Error('Music generation requires a non-empty prompt');
       if (soundEffects && job.prompt.trim().length > 450) throw new Error('Sound effects prompt must be at most 450 characters');
       const wireParameters = job.modality === 'image' ? cloudImageParameters(parameters) : parameters;
+      const musicParameters = (() => {
+        const { duration, ...rest } = parameters;
+        if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0 && rest.music_length_ms === undefined) {
+          return { ...rest, music_length_ms: Math.round(duration * 1000) };
+        }
+        return parameters;
+      })();
       const audioBody = speech
         ? { voice, parameters: { ...audioOptions, text: job.prompt } }
         : soundEffects
           ? { parameters: { ...audioOptions, text: job.prompt } }
-          : { parameters: { ...parameters, prompt: job.prompt } };
+          : { parameters: { ...musicParameters, prompt: job.prompt } };
       const inputs = audio ? [] : await uploadInputs(fetcher, api, headers, job.id, ctx);
+      await ctx.progress('submitting');
       const images = inputs.length ? { images: job.modality === 'video' ? [{ asset_id: inputs[0], role: 'first_frame' }] : inputs } : {};
       const payload = audio ? { model: job.model.modelId, ...audioBody }
         : { ...wireParameters, model: job.model.modelId, prompt: job.prompt, ...images };
@@ -169,12 +178,13 @@ export const opendesign: ProviderAdapter = {
         // Speech timestamps (character alignment or word timings) arrive beside the file.
         if (result.result && typeof result.result === 'object' && !Array.isArray(result.result) && JSON.stringify(result.result).length <= 2_000_000) await ctx.result?.(result.result);
         if (job.modality === 'video') {
+          await ctx.progress('downloading');
           return [await retryRead(async () => {
             const response = await fetcher(taskUrl + '/content', { headers, redirect: 'error', signal: ctx.signal });
             if ([301, 302, 303, 307, 308].includes(response.status) && response.headers.get('location')) return new URL(response.headers.get('location')!, taskUrl).href;
-            if (!response.ok) throw new ProviderError(`OpenDesign Cloud content HTTP ${response.status}`, response.status);
+            if (!response.ok) throw new ProviderError(`OpenDesign Cloud content HTTP ${response.status}`, response.status, undefined, 'download');
             return Buffer.from(await response.arrayBuffer());
-          }, ctx.signal, 5, () => ctx.progress('reconnecting'), () => ctx.progress('generating'))];
+          }, ctx.signal, 5, () => ctx.progress('reconnecting'), () => ctx.progress('downloading'))];
         }
         const urls = result.assets?.map((asset: any) => asset.url).filter((url: unknown) => typeof url === 'string');
         if (!urls?.length) throw new Error('OpenDesign Cloud completed without media output');
@@ -182,8 +192,9 @@ export const opendesign: ProviderAdapter = {
       }
       if (['failed', 'cancelled'].includes(result.status)) {
         const code = typeof result.error?.code === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(result.error.code) ? result.error.code : undefined;
+        await ctx.progress('remote_failed');
         await ctx.result?.({ error: { ...(code ? { code } : {}), ...(typeof result.error?.retryable === 'boolean' ? { retryable: result.error.retryable } : {}) } }, true);
-        throw new Error(`OpenDesign Cloud task ${result.status}${code ? ` (${code})` : ''}; the remote task is terminal`);
+        throw withErrorMeta(new Error(`OpenDesign Cloud task ${result.status}${code ? ` (${code})` : ''}; the remote task is terminal`), { upstreamCode: code });
       }
       if (!['queued', 'pending', 'running', 'processing', 'submitted'].includes(result.status)) throw new Error('OpenDesign Cloud returned an unknown task status');
       await ctx.progress('generating');

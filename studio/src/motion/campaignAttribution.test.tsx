@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../i18n/I18n';
 import { studioEvents } from '../../../tracking/events.ts';
 import { validProperties } from '../../../tracking/core.ts';
+import { attributedEntryId, currentProductId } from '../../../shared/product-identity';
 import { BlackFridayTopBanner, resetBlackFridayImpression } from './BlackFridayTopBanner';
 import { ExploreBlackFridayHero } from './ExploreBlackFridayHero';
 import campaignUi from '../i18n/campaign-ui.json';
@@ -35,16 +36,27 @@ afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllGlo
 
 const render = (node: React.ReactNode) => act(() => root.render(<I18nProvider initialLocale="zh-CN">{node}</I18nProvider>));
 const params = (href: string) => new URL(href).searchParams;
+const stripProductPrefix = (value: string) => currentProductId() === 'opengame' ? value.slice('opengame-'.length) : value;
+const entryIdPattern = () => currentProductId() === 'opengame' ? /^opengame-[0-9a-f-]{36}$/ : /^[0-9a-f-]{36}$/;
 
-it('builds a Pricing link that carries the OpenGame entry the website keeps through checkout', () => {
+it('builds a Pricing link that carries the 4D od_* attribution without utm_* params', () => {
   const url = new URL(campaignPricingUrl('zh-CN', 'openmotion_bf_banner', '7d1c6f4e-6a1f-4c55-9a43-0c7a4a0a8f11', new Date('2026-11-22T00:00:00Z')));
   expect(url.origin + url.pathname).toBe('https://open-design.ai/zh/pricing/');
   expect(Object.fromEntries(url.searchParams)).toEqual({
-    od_origin: 'openmotion', od_entry_source: 'openmotion_manage_subscription', od_entry_id: 'opengame-7d1c6f4e-6a1f-4c55-9a43-0c7a4a0a8f11', od_entry_at: '2026-11-22T00:00:00.000Z',
-    utm_source: 'opengame', utm_medium: 'banner', utm_campaign: 'black_friday_2026',
+    od_origin: currentProductId(),
+    od_entry_source: 'bf_banner',
+    od_entry_id: attributedEntryId('7d1c6f4e-6a1f-4c55-9a43-0c7a4a0a8f11'),
+    od_entry_at: '2026-11-22T00:00:00.000Z',
+    od_placement_id: 'gui__studio__header__all',
+    od_campaign_id: 'black_friday_2026',
   });
-  expect(new URL(campaignPricingUrl('en', 'openmotion_header_pricing', 'x')).pathname).toBe('/pricing/');
-  expect(params(campaignPricingUrl('en', 'openmotion_header_pricing', 'x')).get('utm_medium')).toBe('header');
+  expect(url.searchParams.has('utm_source')).toBe(false);
+  expect(url.searchParams.has('utm_medium')).toBe(false);
+  expect(url.searchParams.has('utm_campaign')).toBe(false);
+  const headerUrl = new URL(campaignPricingUrl('en', 'openmotion_header_pricing', 'x', { studioId: 'header', modality: 'all' }));
+  expect(headerUrl.pathname).toBe('/pricing/');
+  expect(headerUrl.searchParams.get('od_entry_source')).toBe('header_pricing');
+  expect(headerUrl.searchParams.get('od_placement_id')).toBe('gui__studio__header__all');
 });
 
 it('reports one banner impression per page load and joins each claim click to its Pricing link', async () => {
@@ -58,13 +70,15 @@ it('reports one banner impression per page load and joins each claim click to it
   const cta = container.querySelector<HTMLAnchorElement>('a[href*="pricing"]')!;
   cta.addEventListener('click', event => event.preventDefault());
   const firstEntry = params(cta.href).get('od_entry_id');
-  expect(firstEntry).toMatch(/^opengame-[0-9a-f-]{36}$/);
-  expect(params(cta.href).get('utm_source')).toBe('opengame');
-  expect(params(cta.href).get('od_entry_source')).toBe('openmotion_manage_subscription');
-  expect(params(cta.href).get('utm_medium')).toBe('banner');
+  expect(firstEntry).toMatch(entryIdPattern());
+  expect(params(cta.href).get('od_origin')).toBe(currentProductId());
+  expect(params(cta.href).get('od_entry_source')).toBe('bf_banner');
+  expect(params(cta.href).get('od_placement_id')).toBe('gui__studio__header__all');
+  expect(params(cta.href).get('od_campaign_id')).toBe('black_friday_2026');
+  expect(params(cta.href).has('utm_source')).toBe(false);
   await act(async () => { cta.click(); await new Promise(resolve => setTimeout(resolve, 0)); });
   const click = tracked().find(row => row.event === 'ui_click')!.properties;
-  expect(click).toMatchObject({ page_name: 'explore', area: 'campaign_banner', element: 'claim_offer', campaign_id: 'black_friday_2026', entry_id: firstEntry!.slice('opengame-'.length) });
+  expect(click).toMatchObject({ page_name: 'explore', area: 'campaign_banner', element: 'claim_offer', campaign_id: 'black_friday_2026', entry_id: stripProductPrefix(firstEntry!) });
   expect(params(cta.href).get('od_entry_id')).not.toBe(firstEntry);
 
   act(() => container.querySelector<HTMLButtonElement>('button[aria-label="关闭活动 Banner"]')!.click());
@@ -77,11 +91,13 @@ it('reports the header Pricing click with the entry id on its link', async () =>
   const link = container.querySelector<HTMLAnchorElement>('a')!;
   link.addEventListener('click', event => event.preventDefault());
   const entry = params(link.href).get('od_entry_id');
-  expect(entry).toMatch(/^opengame-[0-9a-f-]{36}$/);
-  expect(params(link.href).get('utm_source')).toBe('opengame');
-  expect(params(link.href).get('od_entry_source')).toBe('openmotion_manage_subscription');
+  expect(entry).toMatch(entryIdPattern());
+  expect(params(link.href).get('od_origin')).toBe(currentProductId());
+  expect(params(link.href).get('od_entry_source')).toBe('header_pricing');
+  expect(params(link.href).get('od_placement_id')).toBe('gui__studio__header__all');
+  expect(params(link.href).has('utm_source')).toBe(false);
   await act(async () => { link.click(); await new Promise(resolve => setTimeout(resolve, 0)); });
-  expect(tracked()).toEqual([{ event: 'ui_click', properties: expect.objectContaining({ page_name: 'studio', area: 'header', element: 'open_pricing', campaign_id: 'black_friday_2026', entry_id: entry!.slice('opengame-'.length) }) }]);
+  expect(tracked()).toEqual([{ event: 'ui_click', properties: expect.objectContaining({ page_name: 'studio', area: 'header', element: 'open_pricing', campaign_id: 'black_friday_2026', entry_id: stripProductPrefix(entry!) }) }]);
 });
 
 it('registers every reported campaign event in the closed schema', () => {
@@ -102,6 +118,7 @@ it('shows the campaign only inside its window and drops campaign fields afterwar
   expect(blackFridayActive(Date.parse('2026-11-25T12:00:00+08:00'))).toBe(true);
   expect(blackFridayActive(BLACK_FRIDAY_ENDS_AT - 1)).toBe(true);
   expect(blackFridayActive(BLACK_FRIDAY_ENDS_AT)).toBe(false);
+  expect(params(campaignPricingUrl('en', 'openmotion_header_pricing', 'x', new Date(BLACK_FRIDAY_ENDS_AT))).has('od_campaign_id')).toBe(false);
   expect(params(campaignPricingUrl('en', 'openmotion_header_pricing', 'x', new Date(BLACK_FRIDAY_ENDS_AT))).has('utm_campaign')).toBe(false);
 
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -113,7 +130,8 @@ it('shows the campaign only inside its window and drops campaign fields afterwar
   expect(link.getAttribute('aria-label')).toBe('定价');
   await act(async () => { link.click(); });
   expect(tracked().at(-1)?.properties).not.toHaveProperty('campaign_id');
-  expect(params(link.href).get('od_entry_source')).toBe('openmotion_manage_subscription');
+  expect(params(link.href).get('od_entry_source')).toBe('header_pricing');
+  expect(params(link.href).has('od_campaign_id')).toBe(false);
 });
 
 it('keeps a dismissed banner hidden for the rest of the local day only', () => {
@@ -165,6 +183,7 @@ it('keeps the Pricing entry with localized Free credits badge before the campaig
   render(<PricingEntry trackingPage="studio" />);
   expect(container.textContent).not.toContain('50% OFF');
   expect(container.textContent).toContain(campaignUi['zh-CN']['Free credits']);
+  expect(params(container.querySelector<HTMLAnchorElement>('a')!.href).has('od_campaign_id')).toBe(false);
   expect(params(container.querySelector<HTMLAnchorElement>('a')!.href).has('utm_campaign')).toBe(false);
   act(() => root.render(<I18nProvider key="en" initialLocale="en"><PricingEntry trackingPage="studio" /></I18nProvider>));
   expect(container.textContent).toContain('Free credits');
@@ -270,7 +289,7 @@ it('reports checkout-return plan upgrades and billing failures for PricingEntry 
     await act(async () => { link.click(); });
     await act(async () => { window.dispatchEvent(new Event('focus')); });
     expect(tracked().filter(row => row.event === 'entitlement_refresh_result')).toEqual([
-      { event: 'entitlement_refresh_result', properties: { page_name: 'studio', hook_id: 'header_pricing', entry_id: pricingEntryId!.slice('opengame-'.length), outcome: 'success', plan_changed: true } },
+      { event: 'entitlement_refresh_result', properties: { page_name: 'studio', hook_id: 'header_pricing', entry_id: stripProductPrefix(pricingEntryId!), outcome: 'success', plan_changed: true } },
     ]);
 
     vi.mocked(trackMotion).mockClear();
@@ -281,7 +300,7 @@ it('reports checkout-return plan upgrades and billing failures for PricingEntry 
     await act(async () => { bannerLink.click(); });
     await act(async () => { window.dispatchEvent(new Event('focus')); });
     expect(tracked().filter(row => row.event === 'entitlement_refresh_result')).toEqual([
-      { event: 'entitlement_refresh_result', properties: { page_name: 'explore', hook_id: 'bf_banner', entry_id: bannerEntryId!.slice('opengame-'.length), outcome: 'failure', plan_changed: false } },
+      { event: 'entitlement_refresh_result', properties: { page_name: 'explore', hook_id: 'bf_banner', entry_id: stripProductPrefix(bannerEntryId!), outcome: 'failure', plan_changed: false } },
     ]);
   } finally {
     fetchSpy.mockRestore();

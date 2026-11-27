@@ -10,6 +10,7 @@ import {
   type WebPublishTargetKind,
 } from '../shared/web-publish.ts';
 import type { WorkspaceStore } from '../workspace.ts';
+import { buildMediaSettingsHandoff } from './media-use.ts';
 import { webPublishFor, type WebPublishService } from './web-publish.ts';
 
 const SENSITIVE_PATH_SEGMENTS = new Set([
@@ -393,12 +394,29 @@ export async function webPublishOperation(
       { targetKind, targetId, sourcePath, filePath, title, embedUrl },
       origin,
     );
-    return await service.publish(resolved, {
-      filePath,
-      workspaceId: typeof input.workspaceId === 'string' ? input.workspaceId : undefined,
-      mode: typeof input.deployMode === 'string' ? (input.deployMode as WebPublishMode) : undefined,
-      name: title,
-    });
+    try {
+      return await service.publish(resolved, {
+        filePath,
+        workspaceId: typeof input.workspaceId === 'string' ? input.workspaceId : undefined,
+        mode: typeof input.deployMode === 'string' ? (input.deployMode as WebPublishMode) : undefined,
+        name: title,
+      });
+    } catch (error) {
+      const raw = error instanceof Error ? error.message : String(error);
+      if (raw.startsWith('OPENDESIGN_SIGN_IN_REQUIRED') || (error as { code?: unknown })?.code === 'OPENDESIGN_SIGN_IN_REQUIRED') {
+        const entry = targetKind === 'game'
+          ? 'agent_game_publish_signed_out'
+          : targetKind === 'design'
+            ? 'agent_design_deploy_signed_out'
+            : 'agent_media_signed_out';
+        throw Object.assign(error instanceof Error ? error : new Error(raw), {
+          code: 'OPENDESIGN_SIGN_IN_REQUIRED',
+          applied: false,
+          settingsHandoff: buildMediaSettingsHandoff(entry),
+        });
+      }
+      throw error;
+    }
   }
 
   if (command === 'unpublish') {

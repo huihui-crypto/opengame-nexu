@@ -1,0 +1,272 @@
+.om-sa-stream:has(.om-sa-home) {
+  --sa-composer-max-width: 840px;
+}
+/* Reserve the same space on both rows when the browser uses classic scrollbars. */
+.om-sa-stream:has(.om-sa-home) :is(.om-sa-messages, .om-sa-composer-wrap) {
+  scrollbar-gutter: stable both-edges;
+}
+.om-sa-stream:has(.om-sa-home) .om-sa-composer-wrap {
+  margin-block-end: auto;
+  overflow: hidden;
+}
+.om-sa-stream:has(.om-sa-home) .om-sa-composer-editor { min-height: 52px; }
+.om-sa-messages:has(.om-sa-home) {
+  flex: 0 1 auto;
+  margin-block-start: auto;
+  overflow-x: hidden;
+  padding-block: 0;
+}
+.om-sa-home {
+  box-sizing: border-box;
+  flex: 1;
+  width: 100%;
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding-block: var(--motion-space-16) var(--motion-space-8);
+  color: var(--motion-strong);
+}
+.om-sa-tile-top, .om-sa-game-label, .om-sa-game-cta {
+  display: flex;
+  align-items: center;
+}
+.om-sa-tile-top, .om-sa-game-cta { justify-content: space-between; }
+.om-sa-home-hero { margin: 0 0 var(--motion-space-40); text-align: center; }
+.om-sa-home-hero h2 { margin: 0; font-size: var(--motion-creation-home-title-size); line-height: 1.45; font-weight: var(--motion-weight-step-650); }
+.om-sa-home-hero p { margin: var(--motion-space-12) 0 0; color: var(--motion-muted); font-size: var(--motion-text-step-15); line-height: 22px; }
+.om-sa-starter-grid {
+  --sa-starter-gap: var(--motion-space-16);
+  --sa-tile-side: max(112px, calc((min(100cqi, var(--sa-composer-max-width)) - 2 * var(--sa-starter-gap)) / 6));
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, var(--sa-tile-side));
+  grid-template-rows: repeat(2, var(--sa-tile-side));
+  gap: var(--sa-starter-gap);
+  width: min(100%, var(--sa-composer-max-width));
+}
+/* Anchor the Pencil reference's two light fields to the four secondary cards. */
+.om-sa-starter-grid::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  grid-area: 1 / 2 / 3 / 4;
+  inset: -38% -45% 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(ellipse 48% 79% at
+      calc(36.4% + 3% * sin(var(--sa-ambient-phase)))
+      calc(51.4% + 4.6% * cos(var(--sa-ambient-phase))), var(--motion-creation-home-ambient-green)),
+    radial-gradient(ellipse 45% 80% at
+      calc(63.5% + 2.8% * cos(var(--sa-ambient-phase) + 35deg))
+      calc(75.3% + 4.8% * sin(var(--sa-ambient-phase) + 35deg)), var(--motion-creation-home-ambient-blue));
+  mask-image:
+    linear-gradient(transparent, var(--motion-neutral-n0) 18% 78%, transparent),
+    linear-gradient(90deg, transparent, var(--motion-neutral-n0) 10% 90%, transparent);
+  mask-composite: intersect;
+}
+:where([data-motion-studio][data-theme='paper']) .om-sa-starter-grid::before { opacity: 0.24; }
+
+@property --sa-ambient-phase {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes om-sa-ambient-flow {
+  to { --sa-ambient-phase: 360deg; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .om-sa-starter-grid::before { animation: om-sa-ambient-flow 38s linear infinite; }
+}
+.om-sa-home .om-sa-starter-card {
+  --sa-card-border: var(--motion-creation-home-border);
+  --sa-card-glow-color: var(--motion-creation-home-design-glow);
+  --sa-card-radius: var(--motion-radius-step-14);
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: var(--sa-card-radius);
+  background: transparent;
+  color: var(--motion-strong);
+}
+.om-sa-starter-surface {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--motion-space-8);
+  padding: var(--motion-space-12) var(--motion-space-12) var(--motion-space-16);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--motion-panel);
+  /* Keep pointer coordinates and the popover anchor on the stationary button. */
+  pointer-events: none;
+}
+.om-sa-starter-card:not(.om-sa-game-feature) .om-sa-starter-surface {
+  --sa-card-glare-spread: 1.45;
+  --sa-card-glare-ink: var(--sa-card-glow-color);
+  --sa-card-glare-center-opacity: 19%;
+  background-color: var(--motion-creation-home-secondary-surface);
+}
+.om-sa-tile-copy, .om-sa-game-copy { display: flex; flex-direction: column; align-items: flex-start; }
+.om-sa-tile-copy { gap: var(--motion-space-4); }
+.om-sa-tile-copy strong { font-size: var(--motion-text-body); line-height: 18px; font-weight: var(--motion-weight-semibold); }
+.om-sa-tile-copy small { color: var(--motion-dim); font-size: var(--motion-text-step-10); line-height: 14px; }
+.om-sa-tile-top { color: var(--motion-neutral-n7); }
+.om-sa-tile-icon { color: var(--motion-neutral-n0); }
+:where([data-motion-studio][data-theme='paper']) .om-sa-tile-icon { color: var(--motion-neutral-n11); }
+.om-sa-home .om-sa-starter-card[data-tone=video] {
+  --sa-card-glow-color: var(--motion-creation-home-video-glow);
+}
+.om-sa-home .om-sa-starter-card[data-tone=slides] {
+  --sa-card-glow-color: var(--motion-creation-home-slides-glow);
+}
+.om-sa-home .om-sa-starter-card-more {
+  --sa-card-glow-color: var(--motion-creation-home-more-glow);
+}
+.om-sa-home .om-sa-game-feature {
+  --sa-card-border: var(--motion-creation-home-game-border);
+  --sa-card-glow-color: var(--motion-creation-home-game-glow);
+  --sa-card-radius: var(--motion-radius-step-16);
+  grid-row: span 2;
+  color: var(--motion-neutral-n1);
+}
+.om-sa-game-feature .om-sa-starter-surface { padding: var(--motion-space-16) var(--motion-space-28) var(--motion-space-28); }
+.om-sa-game-feature .om-sa-starter-surface::before,
+.om-sa-starter-surface::after,
+.om-sa-card-glare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.om-sa-game-feature .om-sa-starter-surface::before {
+  --sa-game-cover-offset: var(--motion-space-12);
+  content: '';
+  inset-inline: calc(-1 * var(--sa-game-cover-offset));
+  background: var(--motion-creation-home-shade), url('./art/game-reference.jpg') center / cover;
+  translate: var(--sa-game-cover-offset) 0;
+  scale: 1.045;
+}
+.om-sa-starter-surface::after {
+  --sa-card-rim-color: color-mix(in srgb, var(--sa-card-glow-color) calc(52% * var(--sa-card-rim-strength, var(--sa-card-reflection, 0))), transparent);
+  content: '';
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(var(--sa-card-rim-color) 0 0), var(--sa-card-border);
+  mask: linear-gradient(var(--motion-neutral-n0) 0 0) content-box, linear-gradient(var(--motion-neutral-n0) 0 0);
+  mask-composite: exclude;
+}
+.om-sa-card-glare {
+  opacity: 0;
+}
+.om-sa-starter-card:is(:focus-visible, [data-active]) .om-sa-starter-surface::after { --sa-card-rim-strength: 1; }
+@media (any-hover: hover) and (prefers-reduced-motion: reduce) {
+  .om-sa-starter-card:hover .om-sa-starter-surface::after { --sa-card-rim-strength: 1; }
+}
+.om-sa-tile-top, .om-sa-tile-copy, .om-sa-game-label, .om-sa-game-copy {
+  position: relative;
+  z-index: 1;
+}
+.om-sa-game-label { gap: var(--motion-space-8); font-size: var(--motion-text-body); font-weight: var(--motion-weight-semibold); }
+.om-sa-game-copy { gap: var(--motion-space-8); }
+.om-sa-game-copy strong { max-width: 20ch; white-space: pre-line; font-size: var(--motion-text-display); font-weight: var(--motion-weight-bold); line-height: 1.35; }
+.om-sa-game-copy strong:lang(zh) { max-width: 100%; }
+.om-sa-game-title-accent { color: var(--motion-brand); }
+@supports (background-clip: text) {
+  @media (forced-colors: none) {
+    .om-sa-game-title-accent {
+      background: linear-gradient(90deg, var(--motion-brand), var(--motion-creation-home-accent));
+      background-clip: text;
+      color: transparent;
+    }
+  }
+}
+.om-sa-game-copy small { color: var(--motion-neutral-n5); font-size: var(--motion-text-sm); }
+.om-sa-game-cta {
+  gap: var(--motion-space-12);
+  min-height: 36px;
+  margin-block-start: var(--motion-space-12);
+  padding-inline: var(--motion-space-14);
+  background: var(--motion-creation-home-accent);
+  color: var(--motion-creation-home-accent-ink);
+  font-size: var(--motion-text-md);
+  font-weight: var(--motion-weight-step-650);
+  border-radius: var(--motion-radius-editor-control);
+}
+
+@property --sa-game-cover-phase {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes om-sa-game-cover-loop {
+  to { --sa-game-cover-phase: 360deg; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .om-sa-game-feature .om-sa-starter-surface::before {
+    animation: om-sa-game-cover-loop 5s linear infinite;
+    translate:
+      calc(var(--sa-game-cover-offset) - 1.2% * sin(var(--sa-game-cover-phase)) + 8px * var(--sa-card-x, 0))
+      calc(0.4% * (cos(var(--sa-game-cover-phase)) - 1) + 8px * var(--sa-card-y, 0));
+    scale: calc(1.045 + 0.025 * (0.5 - 0.5 * cos(var(--sa-game-cover-phase))));
+  }
+}
+@media (any-hover: hover) and (prefers-reduced-motion: no-preference) {
+  .om-sa-starter-surface {
+    --sa-card-light-x: calc(50% + 50% * var(--sa-card-x, 0));
+    --sa-card-light-y: calc(50% + 50% * var(--sa-card-y, 0));
+    --sa-card-glare-ink: var(--motion-neutral-n0);
+    transform: perspective(1000px)
+      rotateX(calc(12deg * var(--sa-card-y, 0)))
+      rotateY(calc(-12deg * var(--sa-card-x, 0)));
+    transition: box-shadow var(--motion-duration-normal) var(--motion-ease-out);
+  }
+  .om-sa-starter-card:hover .om-sa-starter-surface { box-shadow: var(--motion-shadow-md); }
+  .om-sa-game-feature .om-sa-starter-surface::before { inset: -6px calc(-6px - var(--sa-game-cover-offset)); }
+  :where([data-motion-studio][data-theme='paper']) .om-sa-starter-card:not(.om-sa-game-feature) .om-sa-starter-surface {
+    --sa-card-glare-ink: var(--motion-neutral-n11);
+  }
+  .om-sa-card-glare {
+    background-image: radial-gradient(
+      ellipse farthest-corner at var(--sa-card-light-x) var(--sa-card-light-y),
+      color-mix(in srgb, var(--sa-card-glare-ink) var(--sa-card-glare-center-opacity, 27%), transparent),
+      color-mix(in srgb, var(--sa-card-glow-color) 11%, transparent) calc(30% * var(--sa-card-glare-spread, 1)),
+      transparent calc(72% * var(--sa-card-glare-spread, 1))
+    );
+    opacity: var(--sa-card-reflection, 0);
+  }
+}
+@container sa-stream (max-width: 700px) {
+  .om-sa-home-hero { margin: 0 0 var(--motion-space-24); }
+  .om-sa-starter-grid {
+    --sa-starter-gap: var(--motion-space-12);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+  .om-sa-starter-grid::before { grid-area: 2 / 1 / 4 / 3; }
+  .om-sa-home .om-sa-game-feature { grid-column: 1 / -1; grid-row: auto; min-height: 260px; }
+  .om-sa-home .om-sa-starter-card:not(.om-sa-game-feature) { aspect-ratio: 1; }
+}
+@container sa-stream (max-width: 400px) {
+  .om-sa-home .om-sa-game-feature { min-height: 242px; }
+  .om-sa-game-feature .om-sa-starter-surface { padding: var(--motion-space-20) var(--motion-space-20) var(--motion-space-32); }
+  .om-sa-game-feature .om-sa-starter-surface::before {
+    background-position: left center, 24% center;
+    background-size: 155% 100%, cover;
+  }
+  .om-sa-game-copy strong { font-size: var(--motion-text-step-26); }
+  .om-sa-game-copy strong:lang(zh) { font-size: min(var(--motion-text-step-26), calc((100cqi - 42px) / 9)); }
+}

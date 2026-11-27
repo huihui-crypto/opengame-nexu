@@ -1,5 +1,13 @@
 {
   "zh-CN": {
+    "What would you like to create today?": "今天想创作什么？",
+    "Start with an idea and bring it to life.": "从一个想法开始，让创意成为作品。",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "人人都能\n做{highlightStart}赚钱小游戏{highlightEnd}",
+    "Turn your idea into a playable game": "让想法变成人人可玩的爆款小游戏",
+    "Design interfaces and assets": "设计界面与素材",
+    "Turn ideas into films": "把想法变成影像",
+    "Present your ideas clearly": "让观点清晰呈现",
+    "Discover more creative tools": "发现更多创作工具",
     "Play again": "再玩一次",
     "Go to store": "前往商店",
     "Chat · {model}": "对话 · {model}",
@@ -1145,6 +1153,14 @@
     "Make your next viral game.": "做一款你的爆款游戏"
   },
   "ja": {
+    "What would you like to create today?": "今日は何を作りますか？",
+    "Start with an idea and bring it to life.": "ひとつのアイデアを、作品へ。",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "誰でも{highlightStart}収益を生むゲーム{highlightEnd}を作れる",
+    "Turn your idea into a playable game": "アイデアを遊べるゲームに",
+    "Design interfaces and assets": "画面や素材をデザイン",
+    "Turn ideas into films": "アイデアを映像に",
+    "Present your ideas clearly": "考えをわかりやすく伝える",
+    "Discover more creative tools": "ほかの制作ツールを見る",
     "Play again": "もう一度遊ぶ",
     "Go to store": "ストアへ",
     "Chat · {model}": "対話 · {model}",
@@ -2290,6 +2306,14 @@
     "Make your next viral game.": "次にバズるゲームを作ろう"
   },
   "ko": {
+    "What would you like to create today?": "오늘은 무엇을 만들까요?",
+    "Start with an idea and bring it to life.": "아이디어를 작품으로 만들어 보세요.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "누구나 {highlightStart}수익을 내는 게임{highlightEnd}을 만들 수 있어요",
+    "Turn your idea into a playable game": "아이디어를 플레이 가능한 게임으로",
+    "Design interfaces and assets": "인터페이스와 에셋 디자인",
+    "Turn ideas into films": "아이디어를 영상으로",
+    "Present your ideas clearly": "생각을 명확하게 전달하기",
+    "Discover more creative tools": "더 많은 창작 도구 살펴보기",
     "Play again": "다시 플레이",
     "Go to store": "스토어로 이동",
     "Chat · {model}": "대화 · {model}",
@@ -3435,6 +3459,14 @@
     "Make your next viral game.": "다음 바이럴 게임을 만드세요"
   },
   "de": {
+    "What would you like to create today?": "Was möchtest du heute gestalten?",
+    "Start with an idea and bring it to life.": "Erwecke deine Idee zum Leben.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Jeder kann Spiele entwickeln, die {highlightStart}Geld verdienen{highlightEnd}.",
+    "Turn your idea into a playable game": "Mach aus deiner Idee ein spielbares Spiel",
+    "Design interfaces and assets": "Oberflächen und Assets gestalten",
+    "Turn ideas into films": "Ideen verfilmen",
+    "Present your ideas clearly": "Ideen klar präsentieren",
+    "Discover more creative tools": "Weitere Kreativwerkzeuge entdecken",
     "Play again": "Erneut spielen",
     "Go to store": "Zum Store",
     "Chat · {model}": "Chat · {model}",
@@ -4583,6 +4615,14 @@
     "Make your next viral game.": "Erschaffe dein nächstes virales Spiel."
   },
   "fr": {
+    "What would you like to create today?": "Que voulez-vous créer aujourd’hui ?",
+    "Start with an idea and bring it to life.": "Donnez vie à votre idée.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Tout le monde peut créer des {highlightStart}jeux rentables{highlightEnd}.",
+    "Turn your idea into a playable game": "Transformez votre idée en jeu jouable",
+    "Design interfaces and assets": "Concevez interfaces et ressources",
+    "Turn ideas into films": "Transformez vos idées en films",
+    "Present your ideas clearly": "Présentez clairement vos idées",
+    "Discover more creative tools": "Découvrez d’autres outils créatifs",
     "Play again": "Rejouer",
     "Go to store": "Voir la boutique",
     "Chat · {model}": "Chat · {model}",
@@ -5731,6 +5771,14 @@
     "Make your next viral game.": "Créez votre prochain jeu viral."
   },
   "ru": {
+    "What would you like to create today?": "Что вы хотите создать сегодня?",
+    "Start with an idea and bring it to life.": "Воплотите свою идею в жизнь.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Каждый может создавать {highlightStart}игры, которые приносят доход{highlightEnd}.",
+    "Turn your idea into a playable game": "Превратите идею в игру",
+    "Design interfaces and assets": "Создавайте интерфейсы и материалы",
+    "Turn ideas into films": "Превращайте идеи в фильмы",
+    "Present your ideas clearly": "Представляйте свои идеи наглядно",
+    "Discover more creative tools": "Другие инструменты для творчества",
     "Play again": "Сыграть ещё",
     "Go to store": "В магазин",
     "Chat · {model}": "Чат · {model}",
@@ -6881,6 +6929,14 @@
     "Make your next viral game.": "Создайте свою следующую вирусную игру."
   },
   "es": {
+    "What would you like to create today?": "¿Qué te gustaría crear hoy?",
+    "Start with an idea and bring it to life.": "Dale vida a tu idea.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Cualquiera puede crear {highlightStart}juegos rentables{highlightEnd}.",
+    "Turn your idea into a playable game": "Convierte tu idea en un juego",
+    "Design interfaces and assets": "Diseña interfaces y recursos",
+    "Turn ideas into films": "Convierte ideas en películas",
+    "Present your ideas clearly": "Presenta tus ideas con claridad",
+    "Discover more creative tools": "Descubre más herramientas creativas",
     "Play again": "Volver a jugar",
     "Go to store": "Ir a la tienda",
     "Chat · {model}": "Chat · {model}",
@@ -8029,6 +8085,14 @@
     "Make your next viral game.": "Crea tu próximo juego viral."
   },
   "pt-BR": {
+    "What would you like to create today?": "O que você quer criar hoje?",
+    "Start with an idea and bring it to life.": "Dê vida à sua ideia.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Qualquer pessoa pode criar {highlightStart}jogos rentáveis{highlightEnd}.",
+    "Turn your idea into a playable game": "Transforme sua ideia em um jogo",
+    "Design interfaces and assets": "Crie interfaces e recursos",
+    "Turn ideas into films": "Transforme ideias em filmes",
+    "Present your ideas clearly": "Apresente suas ideias com clareza",
+    "Discover more creative tools": "Descubra mais ferramentas de criação",
     "Play again": "Jogar novamente",
     "Go to store": "Ir à loja",
     "Chat · {model}": "Chat · {model}",
@@ -9177,6 +9241,14 @@
     "Make your next viral game.": "Crie seu próximo jogo viral."
   },
   "it": {
+    "What would you like to create today?": "Cosa vuoi creare oggi?",
+    "Start with an idea and bring it to life.": "Dai vita alla tua idea.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Tutti possono creare {highlightStart}giochi redditizi{highlightEnd}.",
+    "Turn your idea into a playable game": "Trasforma la tua idea in un gioco",
+    "Design interfaces and assets": "Progetta interfacce e risorse",
+    "Turn ideas into films": "Trasforma le idee in film",
+    "Present your ideas clearly": "Presenta le idee con chiarezza",
+    "Discover more creative tools": "Scopri altri strumenti creativi",
     "Play again": "Gioca ancora",
     "Go to store": "Vai allo store",
     "Chat · {model}": "Chat · {model}",
@@ -10325,6 +10397,14 @@
     "Make your next viral game.": "Crea il tuo prossimo gioco virale."
   },
   "tr": {
+    "What would you like to create today?": "Bugün ne oluşturmak istersin?",
+    "Start with an idea and bring it to life.": "Fikrini hayata geçir.",
+    "Anyone can build {highlightStart}games that earn{highlightEnd}.": "Herkes {highlightStart}gelir getiren oyunlar{highlightEnd} yapabilir.",
+    "Turn your idea into a playable game": "Fikrini oynanabilir bir oyuna dönüştür",
+    "Design interfaces and assets": "Arayüz ve içerik tasarla",
+    "Turn ideas into films": "Fikirleri filme dönüştür",
+    "Present your ideas clearly": "Fikirlerini açıkça sun",
+    "Discover more creative tools": "Diğer yaratıcı araçları keşfet",
     "Play again": "Tekrar oyna",
     "Go to store": "Mağazaya git",
     "Chat · {model}": "Sohbet · {model}",

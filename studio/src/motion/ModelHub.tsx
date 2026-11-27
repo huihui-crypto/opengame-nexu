@@ -17,10 +17,11 @@ import { isOpenDesignProvider } from './imageMenuModels';
 import type { AssetDraft } from './AssetComposer';
 import { findModelHub, type HubShowcaseCase } from './modelHubs';
 import { HubVideoWall } from './HubVideoWall';
-import { setPendingAttribution } from './entitlementAttribution';
+import { setPendingAttribution, useCheckoutReturnRefresh } from './entitlementAttribution';
 import { reportHubClick, reportHubPageView } from './exploreTracking';
-import { campaignPricingUrl, newCampaignEntryId, pricingLinkTargetProps, useBlackFridayActive } from './campaignAttribution';
+import { BLACK_FRIDAY_CAMPAIGN, campaignPricingUrl, newCampaignEntryId, pricingLinkTargetProps, useBlackFridayActive } from './campaignAttribution';
 import { newTrackingId } from './pageTracking';
+import { send, slugField } from './reporting';
 import { BackToExploreButton } from './BackToExploreButton';
 import { X_VIDEO_ESCAPE_EVENT, isXVideoUrl, xVideoDocument } from './xVideoEmbed';
 
@@ -231,16 +232,45 @@ export function ModelHub({ id, onExplore, onProvider, onModel, onUse, onScene, o
       window.removeEventListener('resize', sync);
     };
   }, [selectedTag, id, locale]);
+  const isShowcaseHub = Boolean(hub?.cases && hub.cases.length > 0 && hub.videos.length === 0);
+  const promoBadgeText = hub?.promoBadge ? t(hub.promoBadge) : undefined;
+  const markBfPillCheckoutReturn = useCheckoutReturnRefresh('model_hub', 'model_hub_bf_pill');
+  const bfPillReportedRef = useRef<string | null>(null);
+  const bfPillImpressionEntryRef = useRef<{ hubId: string; entryId: string } | null>(null);
+  const showBfPill = Boolean(hub && isShowcaseHub && bfActive && promoBadgeText);
+  useEffect(() => {
+    if (!hub || !showBfPill) { bfPillImpressionEntryRef.current = null; return; }
+    if (bfPillImpressionEntryRef.current?.hubId !== hub.id) {
+      bfPillImpressionEntryRef.current = { hubId: hub.id, entryId };
+    }
+  }, [hub, showBfPill, entryId]);
   useEffect(() => {
     if (!hub || viewed.current || !accountKnown) return;
     viewed.current = true;
     reportHubPageView(hub.id, hasProject, signedIn);
   }, [hub, accountKnown, signedIn, hasProject]);
+  useEffect(() => {
+    if (!hub || !showBfPill) { bfPillReportedRef.current = null; return; }
+    if (!accountKnown || bfPillReportedRef.current === hub.id) return;
+    bfPillReportedRef.current = hub.id;
+    const impressionEntryId = bfPillImpressionEntryRef.current?.hubId === hub.id
+      ? bfPillImpressionEntryRef.current.entryId
+      : entryId;
+    send('surface_view', {
+      page_name: 'model_hub',
+      area: 'hub_header',
+      element: 'banner',
+      hook_id: 'model_hub_bf_pill',
+      campaign_id: BLACK_FRIDAY_CAMPAIGN,
+      entry_id: impressionEntryId,
+      ...slugField('hub_id', hub.id),
+      signed_in: signedIn,
+    });
+  }, [hub, showBfPill, accountKnown, entryId, signedIn]);
   if (!hub) return <main className="om-explore"><div className="om-discovery-page">
     <div><BackToExploreButton onClick={onExplore} /></div>
     <section><h1 className="om-title">{t('Page unavailable')}</h1><p className="om-muted">{id}</p></section>
   </div></main>;
-  const isShowcaseHub = Boolean(hub.cases && hub.cases.length > 0 && hub.videos.length === 0);
   const availableProviders = new Set(
     (catalog?.status.providers ?? [])
       .filter(item => item.available && item.mediaEntitlement !== 'not-included')
@@ -297,8 +327,7 @@ export function ModelHub({ id, onExplore, onProvider, onModel, onUse, onScene, o
   const eyebrowText = t(hub.eyebrow);
   const summaryText = t(hub.summary);
   const primaryCtaText = hub.primaryCta ? t(hub.primaryCta) : t('Open in {studio}', { studio: t('Motion Studio') });
-  const promoBadgeText = hub.promoBadge ? t(hub.promoBadge) : undefined;
-  const pricingHref = campaignPricingUrl(locale, 'openmotion_bf_banner', entryId);
+  const pricingHref = campaignPricingUrl(locale, 'opengame_model_hub_bf_pill', entryId);
 
   const showcaseTags = Array.from(new Map(
     (hub.cases ?? []).map(item => [item.tag, t(item.tag)])
@@ -329,7 +358,17 @@ export function ModelHub({ id, onExplore, onProvider, onModel, onUse, onScene, o
                       href={pricingHref}
                       {...pricingLinkTargetProps()}
                       onClick={event => {
-                        event.currentTarget.href = campaignPricingUrl(locale, 'openmotion_bf_banner', entryId);
+                        const clickedId = entryId;
+                        if (bfPillImpressionEntryRef.current?.hubId !== hub.id) {
+                          bfPillImpressionEntryRef.current = { hubId: hub.id, entryId: clickedId };
+                        }
+                        markBfPillCheckoutReturn(clickedId);
+                        track('hub_header', 'claim_offer', {
+                          hookId: 'model_hub_bf_pill',
+                          entryId: clickedId,
+                          campaignId: BLACK_FRIDAY_CAMPAIGN,
+                        });
+                        event.currentTarget.href = campaignPricingUrl(locale, 'opengame_model_hub_bf_pill', clickedId);
                         window.setTimeout(() => setEntryId(newCampaignEntryId()), 0);
                       }}
                     >

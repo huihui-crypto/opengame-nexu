@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from 'open-design-ui/button';
 import { RemixIcon } from '../icons/RemixIcons';
 import { useI18n } from '../i18n/I18n';
-import { consumePendingAttribution, type EntryAttribution } from './entitlementAttribution';
+import { consumePendingAttribution, resolveSettingsAttribution, type EntryAttribution } from './entitlementAttribution';
 import { gatewayRequest } from './gatewayClient';
 
 // The local service opens the subscription page in the system browser, where sign-in happened, with a fresh entry
@@ -33,7 +33,7 @@ export function useSubscriptionOpener(onClick: (action: SubscriptionAction, attr
   }, [onReturn]);
 
   async function openSubscription(element: SubscriptionAction, cardAttribution?: EntryAttribution) {
-    const attribution = cardAttribution ?? consumePendingAttribution('subscription', 'settings_subscription');
+    const attribution = resolveSettingsAttribution(cardAttribution ?? consumePendingAttribution('subscription', 'settings_subscription'));
     if (!cardAttribution) onClick(element, attribution);
     fallback.current = attribution;
     setSubscriptionUrl(undefined);

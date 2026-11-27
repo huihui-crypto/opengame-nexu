@@ -13,6 +13,7 @@ import { checkVisionLock } from './vision-runtime.mjs';
 import { checkReleaseVersion, releaseTemplateEnvironment } from './release-version.mjs';
 import { onboardingSourceFiles } from '../shared/onboarding-templates.ts';
 import { buildGameTemplateBundles, offlineGame } from './game-template-publication.ts';
+import { resolveNodeProductId } from '../shared/product-identity.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // GitHub serves the full showcase. npm ships the application and its technical documentation.
@@ -130,7 +131,7 @@ export async function packageNpm(output = path.join(root, 'dist/npm-local'), ver
     await writeJSON(path.join(application, 'shared/template-config.json'), templateConfig);
     const gameTemplates = { schemaVersion: 1, games };
     await writeJSON(path.join(application, 'templates/game-downloads.json'), gameTemplates);
-    await writeJSON(path.join(application, 'shared/build-info.json'), { commit });
+    await writeJSON(path.join(application, 'shared/build-info.json'), { commit, product: resolveNodeProductId() });
     const skills = (await readdir(path.join(application, 'skills'))).sort();
     for (const name of ['runtime-assets.mjs', 'npm-runtime.mjs', 'npm-hosts.mjs', 'npm-installer.mjs', 'check-installed-mcp.mjs', 'mcp-client.mjs', 'diagnostics.mjs', 'diagnostic-redaction.mjs', 'zip.mjs']) await cp(path.join(root, 'scripts', name), path.join(installer, 'scripts', name));
     // Node cannot strip TypeScript inside node_modules. Ship generated JavaScript

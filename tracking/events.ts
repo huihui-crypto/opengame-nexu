@@ -1,4 +1,31 @@
-import { assetImportErrorCodes, exportFailureCodes, exportFailureStages, mediaGenerationErrorCodes, superAgentErrorCodes, toolDimensions, toolFailureDimensions } from './tool-fields.ts';
+import {
+  assetImportErrorCodes,
+  exportFailureCodes,
+  exportFailureStages,
+  mediaGenerationAccountPlans,
+  mediaGenerationAspectRatios,
+  mediaGenerationAudioKinds,
+  mediaGenerationCancelPhases,
+  mediaGenerationCancelSources,
+  mediaGenerationDestinations,
+  mediaGenerationEntrySurfaces,
+  mediaGenerationErrorCategories,
+  mediaGenerationErrorCodes,
+  mediaGenerationExecutorKinds,
+  mediaGenerationFailurePhases,
+  mediaGenerationModes,
+  mediaGenerationPipelineSteps,
+  mediaGenerationRejectionCategories,
+  mediaGenerationRejectionReasons,
+  mediaGenerationResolutions,
+  mediaGenerationRouteChannels,
+  mediaGenerationSpatialKinds,
+  mediaGenerationUpstreamErrorCodes,
+  mediaModalities,
+  superAgentErrorCodes,
+  toolDimensions,
+  toolFailureDimensions,
+} from './tool-fields.ts';
 import type { Entry, Registry } from './core.ts';
 import { studioUsageEvents } from './studio-events.ts';
 import { templateEntries } from '../shared/template-attribution.ts';
@@ -23,13 +50,27 @@ export const webMcpToolNames = ['openmotion_capability_discover', 'openmotion_ca
   'openmotion_studio_look', 'openmotion_studio_select', 'openmotion_studio_seek',
   'openmotion_studio_frame', 'openmotion_studio_inspect'] as const;
 const webMcp = { tool_name: webMcpToolNames, transport: ['webmcp'] } as const;
-const generation = { modality: ['image', 'video', 'audio'] } as const;
+const generation = { modality: mediaModalities } as const;
 const mediaGenerationDimensions = {
+  executor_kind: mediaGenerationExecutorKinds,
   provider_kind: ['builtin', 'custom', 'account', 'agent'],
+  route_channel: mediaGenerationRouteChannels,
   model_provider: 'slug',
   model_id: 'model_id',
   capability_id: 'code',
+  entry_surface: mediaGenerationEntrySurfaces,
+  destination: mediaGenerationDestinations,
+  generation_mode: mediaGenerationModes,
+  audio_kind: mediaGenerationAudioKinds,
+  spatial_kind: mediaGenerationSpatialKinds,
+  pipeline_step: mediaGenerationPipelineSteps,
   reference_count: 'integer',
+  is_edit: 'boolean',
+  account_plan: mediaGenerationAccountPlans,
+  requested_duration_sec: { min: 0, max: 600, integer: true },
+  requested_aspect_ratio: mediaGenerationAspectRatios,
+  requested_resolution: mediaGenerationResolutions,
+  requested_audio: 'boolean',
 } as const;
 const superAgentRuntimeKinds = ['local-direct', 'local-bridge', 'remote-service'] as const;
 const superAgentIntents = ['chat', 'coding', 'design', 'research', 'visualization', 'image', 'video', 'audio', 'game', 'website', 'slides', 'brand', 'other'] as const;
@@ -104,15 +145,18 @@ export const entitlementHookIds = [
   'studio_generate', 'cloud_export', 'session_expired_401', 'header_pricing', 'bf_banner',
   'settings_subscription', 'studio_free_gate', 'model_picker_upgrade', 'studio_res_gate',
   'failure_card_topup', 'mcp_oauth',
-  'model_hub_signin', 'model_hub_upgrade', 'game_publish_signin', 'cloud_share_signin',
+  'model_hub_signin', 'model_hub_upgrade', 'model_hub_bf_pill', 'explore_bf_hero',
+  'game_publish_signin', 'cloud_share_signin',
   'balance_gate_topup', 'concurrency_gate_upgrade',
   'game_publish_panel_signin', 'game_publish_unlisted_upgrade',
+  'game_publish_failed_signin', 'game_publish_post_signin', 'game_publish_telegram_signin',
 ] as const;
 export type EntitlementHookId = (typeof entitlementHookIds)[number];
 const campaign = { campaign_id: ['black_friday_2026'], entry_id: 'uuid', hook_id: entitlementHookIds } as const;
 // Workspace assets: which shelf the library shows and what kind of media an action is about.
 const assetKind = ['all', 'image', 'video', 'audio', 'trash'] as const;
 const modality = ['image', 'video', 'audio'] as const;
+const attributionModality = ['image', 'video', 'audio', 'all'] as const;
 // Settings sections as routed in the workspace; providers and Agents are named by their built-in ids only.
 const settingsSection = ['account', 'subscription', 'providers', 'models', 'local', 'general', 'appearance', 'privacy', 'about', 'help', 'mcp', 'brand-kit'] as const;
 const provider = { provider_id: 'slug', provider_kind: ['builtin', 'custom', 'account', 'agent'] } as const;
@@ -165,17 +209,72 @@ export const omEvents = {
     error_code: [...toolFailureDimensions.error_code, ...assetImportErrorCodes] }, required: ['failed_count', 'error_code'] },
   export_request_result: { producers: ['mcp'], fields: { ...business, job_id: 'uuid', queue_state: ['pending', 'running', 'cancelling', 'cancelled', 'completed', 'failed'] }, required: ['outcome'] },
   export_cancel_result: { producers: ['mcp'], fields: { ...business, job_id: 'uuid', state_after: ['pending', 'running', 'cancelling', 'cancelled', 'completed', 'failed'] }, required: ['outcome'] },
-  media_generation_requested: { producers: ['worker'], fields: { ...generation, capability_id: 'code' }, required: ['modality'] },
-  media_generation_submitted: { producers: ['worker'], fields: { ...generation, ...mediaGenerationDimensions, job_id: 'uuid' }, required: ['modality', 'job_id'] },
-  media_generation_result: { producers: ['worker'], fields: { ...generation, ...mediaGenerationDimensions, job_id: 'uuid',
-    job_state: ['completed', 'failed', 'cancelled'], asset_count: 'integer', duration_ms: 'integer', queue_wait_ms: 'integer',
-    attempt_kind: ['initial', 'resume', 'retry_save'], remote_terminal: 'boolean', error_code: mediaGenerationErrorCodes }, required: ['modality', 'job_id', 'job_state', 'asset_count'] },
+  media_generation_requested: { producers: ['worker'], fields: {
+    ...generation, request_id: 'uuid', capability_id: 'code',
+    executor_kind: mediaGenerationExecutorKinds,
+    spatial_kind: mediaGenerationSpatialKinds,
+    entry_surface: mediaGenerationEntrySurfaces, destination: mediaGenerationDestinations,
+    generation_mode: mediaGenerationModes, reference_count: 'integer', is_edit: 'boolean',
+    has_idempotency_key: 'boolean',
+  }, required: ['modality'] },
+  media_generation_rejected: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, request_id: 'uuid',
+    has_idempotency_key: 'boolean',
+    rejection_reason: mediaGenerationRejectionReasons,
+    rejection_category: mediaGenerationRejectionCategories,
+  }, required: ['modality', 'request_id', 'rejection_reason', 'rejection_category'] },
+  media_generation_replayed: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, request_id: 'uuid', job_id: 'uuid',
+    existing_job_state: ['queued', 'running', 'completed', 'failed', 'cancelled'],
+  }, required: ['modality', 'request_id', 'job_id', 'existing_job_state'] },
+  media_generation_submitted: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, job_id: 'uuid',
+    request_id: 'uuid', attempt_id: 'uuid', attempt_number: 'integer',
+    attempt_kind: ['initial', 'resume', 'retry_save'],
+    has_idempotency_key: 'boolean', queue_depth: 'integer',
+  }, required: ['modality', 'job_id'] },
+  media_generation_retry_started: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, job_id: 'uuid',
+    request_id: 'uuid', attempt_id: 'uuid', attempt_number: 'integer',
+    attempt_kind: ['resume', 'retry_save'],
+    previous_error_code: mediaGenerationErrorCodes,
+    previous_failure_phase: mediaGenerationFailurePhases,
+  }, required: ['modality', 'job_id', 'attempt_id', 'attempt_number', 'attempt_kind'] },
+  media_generation_retry_rejected: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, job_id: 'uuid',
+    request_id: 'uuid',
+    attempt_kind: ['resume', 'retry_save'],
+    rejection_reason: mediaGenerationRejectionReasons,
+    rejection_category: mediaGenerationRejectionCategories,
+  }, required: ['modality', 'job_id', 'attempt_kind', 'rejection_reason', 'rejection_category'] },
+  media_generation_result: { producers: ['worker'], fields: {
+    ...generation, ...mediaGenerationDimensions, job_id: 'uuid',
+    request_id: 'uuid', attempt_id: 'uuid', attempt_number: 'integer',
+    job_state: ['completed', 'failed', 'cancelled'], asset_count: 'integer',
+    duration_ms: 'integer', queue_wait_ms: 'integer', end_to_end_ms: 'integer',
+    upload_ms: 'integer', remote_ms: 'integer', download_ms: 'integer', save_ms: 'integer',
+    cancel_wait_ms: 'integer',
+    attempt_kind: ['initial', 'resume', 'retry_save'], remote_terminal: 'boolean',
+    has_remote_id: 'boolean', is_resumable: 'boolean', save_pending: 'boolean',
+    reconnected_count: 'integer', total_output_bytes: { min: 0, max: 536_870_912, integer: true },
+    failure_phase: mediaGenerationFailurePhases,
+    phase_before_cancel: mediaGenerationCancelPhases,
+    last_active_phase: mediaGenerationCancelPhases,
+    cancel_source: mediaGenerationCancelSources,
+    http_status: { min: 100, max: 599, integer: true },
+    upstream_error_code: mediaGenerationUpstreamErrorCodes,
+    error_code: mediaGenerationErrorCodes,
+    error_category: mediaGenerationErrorCategories,
+    previous_error_code: mediaGenerationErrorCodes,
+    previous_failure_phase: mediaGenerationFailurePhases,
+  }, required: ['modality', 'job_id', 'job_state', 'asset_count'] },
   export_result: { producers: ['worker'], fields: { job_id: 'uuid', job_state: ['completed', 'failed', 'cancelled'], duration_ms: 'integer', technical_check: ['passed', 'failed', 'unknown'], failure_stage: exportFailureStages, error_code: exportFailureCodes }, required: ['job_id', 'job_state', 'duration_ms', 'technical_check'] },
   // One per finished OpenDesign sign-in attempt. `replaced` is an interrupted attempt the service refused; the same
   // sign-in continues with a new attempt. Times are milliseconds since the click. Stage values come from the connector
   // protocol; only confirmed account IDs are allowed, never links, authorization codes or credentials.
   account_sign_in_result: { producers: ['mcp'], fields: { attempt_id: 'uuid', outcome: ['success', 'failure', 'cancelled', 'replaced'],
-    source_product: ['openmotion'], source_detail: ['openmotion_editor_login'], hook_id: entitlementHookIds, entry_id: 'uuid', entry_occurred_at: 'timestamp', amr_user_id: 'code',
+    source_product: ['openmotion', 'opengame'], source_detail: ['openmotion_editor_login', 'opengame_editor_login', ...entitlementHookIds], hook_id: entitlementHookIds, entry_id: 'uuid', entry_occurred_at: 'timestamp',
+    entry_from: providerSetupEntries, studio_id: 'slug', modality: attributionModality, amr_user_id: 'code',
     error_code: ['connector_unavailable', 'setup_failed', 'authorization_expired', 'credentials_rejected'],
     connector_problem: ['npm_missing', 'install_failed', 'start_failed'], connector_version: 'code', resumed: 'boolean',
     last_stage: accountStages, last_result: ['started', 'success', 'failed'], error_kind: accountErrorKinds, browser_opened: 'boolean',
@@ -243,9 +342,9 @@ export const omEvents = {
   recovery_recorded: { producers: ['mcp', 'worker'], fields: { incident_id: 'uuid', test_case_id: 'code', fault_type: 'code', data_integrity: ['preserved', 'lost', 'unknown'], duplicate_charge_check: ['clear', 'found', 'unknown'], recovery_result: ['success', 'failure', 'unknown'] }, required: ['incident_id', 'test_case_id', 'fault_type', 'data_integrity', 'duplicate_charge_check', 'recovery_result'] },
   page_view: { producers: ['studio'], fields: { page_name: pages, view_id: 'uuid', embedded: 'boolean', has_project: 'boolean', brand_collection: brandCollection, entry_from: entryFrom, mcp_client: mcpClient, settings_section: settingsSection,
     studio_id: creative.studio_id, scene_id: creative.scene_id, model_provider: creative.model_provider, model_id: creative.model_id, explore_community: creative.explore_community, medium: creative.medium, landing: creative.landing, hub_id: modelHub.hub_id, signed_in: modelHub.signed_in }, required: ['page_name', 'view_id', 'embedded', 'has_project'] },
-  provider_setup_opened: { producers: ['mcp'], fields: { entry_from: providerSetupEntries, presentation: ['foreground', 'background', 'now'], embedded: 'boolean' },
+  provider_setup_opened: { producers: ['mcp'], fields: { entry_from: providerSetupEntries, presentation: ['foreground', 'background', 'now'], embedded: 'boolean', studio_id: 'slug', modality: attributionModality },
     required: ['entry_from', 'presentation', 'embedded'] },
-  upgrade_link_result: { producers: ['mcp'], fields: { entry_from: ['agent_media_upgrade_free', 'agent_media_upgrade_go'], entry_id: 'uuid', outcome: ['success', 'failure'] },
+  upgrade_link_result: { producers: ['mcp'], fields: { entry_from: ['agent_media_upgrade_free', 'agent_media_upgrade_go', 'agent_media_balance_low'], entry_id: 'uuid', outcome: ['success', 'failure'], channel: ['mcp_stdio', 'mcp_http'], studio_id: 'slug', modality: attributionModality },
     required: ['entry_from', 'outcome'] },
   studio_load_result: { producers: ['studio'], fields: { load_id: 'uuid', outcome, duration_ms: 'integer', embedded: 'boolean', ...project, ...projectScale, ...template }, required: ['load_id', 'outcome', 'duration_ms', 'embedded'] },
   ui_click: { producers: ['studio'], fields: { page_name: pages,
@@ -297,7 +396,8 @@ export const omEvents = {
       'create_trailer', 'regenerate_trailer', 'open_trailer_project', 'open_game_studio', 'view_all_games',
       'open_palette', 'select_result', 'scope_tab', 'popular_topic', 'ask_super_agent',
       'open_skill_fallback', 'toggle_options', 'toggle_instruction', 'run_super_agent',
-      'close_modal', 'check_balance'],
+      'close_modal', 'check_balance',
+      'open_account', 'open_subscription', 'open_browser_signin', 'get_api_key', 'open_account_settings', 'connect_provider'],
     // The chosen value of a control with a small fixed set of choices; never free text.
     option: ['on', 'off', 'light', 'dark', 'en', 'zh-CN', 'ja', 'ko', 'de', 'fr', 'ru', 'es', 'pt-BR', 'it', 'tr',
       'all', 'images', 'video', 'audio', 'fonts',
@@ -312,7 +412,7 @@ export const omEvents = {
     ...skill, ...brand, brand_collection: brandCollection, ...mcp, entry_from: entryFrom, ...referenceEntry, ...referenceSource,
     doc_id: ['mcp_tools', 'skills', 'agent_adapters', 'docs_home', 'repository'], section_id: 'slug', faq_index: 'integer',
     search_scope: paletteScope, palette_item_kind: paletteItemKind, palette_action: paletteAction, resource_id: 'slug',
-    ...workspacePages, ...creative, ...modelHub, ...campaign, ...generationOffer,
+    ...workspacePages, modality: attributionModality, ...creative, ...modelHub, ...campaign, ...generationOffer,
     ...game, game_option_kind: ['genre', 'style', 'setting', 'orientation', 'playable_ad', 'multiplayer'], game_view: ['preview', 'code', 'trailer'], publish_target: webPublishTargets },
     required: ['page_name', 'area', 'element'] },
   // Studio UI exports run in the editor's own render pipeline, not the worker that owns export_result.
@@ -341,10 +441,10 @@ export const omEvents = {
     required: ['outcome', 'entry_point', 'requested_count', 'added_count', 'failed_count'] },
   // A surface that became visible: the library, a template card, one template's detail, or the instruction to copy.
   // A card counts once it is at least half visible for a second, once per result set.
-  surface_view: { producers: ['studio'], fields: { page_name: pages, area: ['template_library', 'template_card', 'template_detail', 'template_instruction', 'template_discovery', 'template_related', 'template_guide', 'skill_detail', 'brand_detail', 'template_series_card', 'template_series_detail', 'template_series_work', 'campaign_banner', 'command_palette', 'template_zero_result_skills', 'asset_create', 'account', 'entitlement_modal', 'entitlement_gate', 'game_detail', 'game_handoff'],
+  surface_view: { producers: ['studio'], fields: { page_name: pages, area: ['template_library', 'template_card', 'template_detail', 'template_instruction', 'template_discovery', 'template_related', 'template_guide', 'skill_detail', 'brand_detail', 'template_series_card', 'template_series_detail', 'template_series_work', 'campaign_banner', 'command_palette', 'template_zero_result_skills', 'asset_create', 'account', 'entitlement_modal', 'entitlement_gate', 'game_detail', 'game_handoff', 'hub_header', 'provider_detail'],
     element: ['library', 'card', 'detail', 'instruction', 'search_recovery', 'reference', 'related', 'guide', 'banner', 'palette', 'skill_fallback', 'modal', 'gate_card', 'handoff'], ...generationOffer, settings_section: settingsSection, scene_id: creative.scene_id, ...campaign, placement, position: 'integer', source_template_id: 'slug', ...templateList, ...templateDetail, ...template, ...templateSeries,
     ...skill, ...brand, ...referenceEntry, brand_state: brandState, recovery_reason: ['no_results', 'unsuitable', 'catalog_empty'],
-    studio_id: creative.studio_id, ...game, publish_target: webPublishTargets },
+    studio_id: creative.studio_id, modality: attributionModality, ...game, publish_target: webPublishTargets, hub_id: modelHub.hub_id, signed_in: modelHub.signed_in },
     required: ['page_name', 'area', 'element'] },
   // Global Cmd+K command palette settled search; one per settled query, never per keystroke.
   command_palette_search_result: { producers: ['studio'], fields: { page_name: pages, area: ['command_palette'],
@@ -427,6 +527,7 @@ export const omEvents = {
     required: ['publish_target', 'action', 'outcome', 'publish_attempt_id'] },
   // Reported when the user returns from an external Pricing / subscription checkout and Studio refreshes their billing entitlement.
   entitlement_refresh_result: { producers: ['studio'], fields: { page_name: pages, hook_id: entitlementHookIds, entry_id: 'uuid',
+    entry_from: providerSetupEntries, studio_id: 'slug', modality: attributionModality,
     outcome: ['success', 'failure'], plan_changed: 'boolean' },
     required: ['page_name', 'outcome', 'plan_changed'] },
   brand_kit_create_result: { producers: ['studio'], fields: { page_name: ['brand_kit'], outcome: ['success', 'failure'], create_attempt_id: 'uuid' },

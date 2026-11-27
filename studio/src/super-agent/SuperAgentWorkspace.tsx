@@ -73,6 +73,7 @@ import {
   updateSuperAgentChat,
   updateSuperAgentQueuedMessage,
 } from './superAgentClient';
+import { gamePublishActions, gamePublishSessionFor, type GamePublishChooseOptions } from './gamePublish/gamePublishStore';
 import './superAgent.css';
 
 function modeChatIntent(mode?: SuperAgentCreationModeId | null): SuperAgentIntent | undefined {
@@ -305,6 +306,7 @@ function artifactToResourceAttachment(artifact: SuperAgentArtifact): SuperAgentR
 export function SuperAgentWorkspace({
   active,
   chatId,
+  homeVisit,
   requestedMode = null,
   requestedDesignModule = null,
   requestedGameId = null,
@@ -324,6 +326,7 @@ export function SuperAgentWorkspace({
 }: {
   active: boolean;
   chatId: string | null;
+  homeVisit?: number;
   requestedMode?: SuperAgentCreationModeId | null;
   requestedDesignModule?: SuperAgentDesignModuleId | null;
   requestedGameId?: string | null;
@@ -378,6 +381,8 @@ export function SuperAgentWorkspace({
   const hasLoadedListRef = useRef(Boolean(initialCachedConversations));
   const lastActivationRefreshRef = useRef(0);
   const [activeChat, setActiveChat] = useState<SuperAgentChat | null>(initialCachedChat);
+  const routedChatIdRef = useRef(chatId);
+  routedChatIdRef.current = chatId;
   const [loadingChat, setLoadingChat] = useState(() => Boolean(active && chatId && !initialCachedChat));
   const [loadFailed, setLoadFailed] = useState(false);
   const [chatRetry, setChatRetry] = useState(0);
@@ -398,7 +403,8 @@ export function SuperAgentWorkspace({
   const [gameTemplateSeed, setGameTemplateSeed] = useState<{ id: number; game: GameCard } | null>(null);
   const playedGamesRef = useRef<Map<string, GameCard>>(new Map());
   const handoffSeqRef = useRef(0);
-  const [pendingAutoSend, setPendingAutoSend] = useState<{ id: number; payload: SuperAgentHandoffPayload } | null>(null);
+  const [pendingAutoSends, setPendingAutoSends] = useState<{ id: number; payload: SuperAgentHandoffPayload }[]>([]);
+  const pendingAutoSend = pendingAutoSends[0];
   const dispatchedHandoffIdsRef = useRef<Set<number>>(new Set());
 
   const [selection, setSelection] = useState<AgentSelection>({
@@ -420,11 +426,20 @@ export function SuperAgentWorkspace({
   const [sidebarOpen, setSidebarOpen] = useState(!narrow);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerExpanded, setViewerExpanded] = useState(false);
+  const previousHomeVisit = useRef(homeVisit);
+  useEffect(() => {
+    if (previousHomeVisit.current === homeVisit) return;
+    previousHomeVisit.current = homeVisit;
+    setViewerOpen(false);
+    setViewerExpanded(false);
+  }, [homeVisit]);
   const viewerPaneId = useId();
   const [viewerWidth, setViewerWidth] = useState<number | null>(null);
   const [viewerHeight, setViewerHeight] = useState<number | null>(null);
   const [openTabIds, setOpenTabIds] = useState<string[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>(NEW_VIEWER_TAB_ID);
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
   const [previewArtifacts, setPreviewArtifacts] = useState<SuperAgentArtifact[]>([]);
   const previewArtifactIdsRef = useRef<Set<string>>(new Set());
   const chatArtifacts = useMemo(() => presentChatArtifacts(activeChat?.artifacts ?? []), [activeChat?.artifacts]);
@@ -438,6 +453,15 @@ export function SuperAgentWorkspace({
     return extras.length ? [...chatArtifacts.artifacts, ...extras] : chatArtifacts.artifacts;
   }, [chatArtifacts.artifacts, previewArtifacts]);
   const [pendingDeployArtifactId, setPendingDeployArtifactId] = useState<string | null>(null);
+  const publishLookupRef = useRef(0);
+  const pendingDouyinPublishRef = useRef<{
+    sourceChatId: string | null;
+    chatId: string;
+    sourceArtifactId: string;
+    artifactId: string;
+    options: GamePublishChooseOptions;
+    reachedDestination?: boolean;
+  } | null>(null);
   const [pendingCodeFile, setPendingCodeFile] = useState<{ artifactId: string; filePath: string; seq: number } | null>(null);
   const handledRequestedGameRef = useRef<string | null>(null);
 
@@ -870,6 +894,12 @@ export function SuperAgentWorkspace({
     const payload = consumeSuperAgentHandoff();
     if (!payload) return;
     const seq = ++handoffSeqRef.current;
+    if (payload.existingChatId) {
+      if (payload.autoSend && payload.existingChatId === chatId) {
+        setPendingAutoSends(current => [...current, { id: seq, payload }]);
+      }
+      return;
+    }
     const mergedAttachments = (() => {
       const next: SuperAgentResourceAttachment[] = payload.newChat === false ? [...attachments] : [];
       for (const att of payload.attachments ?? []) {
@@ -883,13 +913,10 @@ export function SuperAgentWorkspace({
     setAttachments(mergedAttachments);
 
     if (payload.autoSend) {
-      setPendingAutoSend({
-        id: seq,
-        payload: {
-          ...payload,
-          attachments: mergedAttachments,
-        },
-      });
+      setPendingAutoSends(current => [
+        ...current.filter(entry => entry.payload.existingChatId),
+        { id: seq, payload: { ...payload, attachments: mergedAttachments } },
+      ]);
       return;
     }
 
@@ -929,7 +956,7 @@ export function SuperAgentWorkspace({
     if (payload.prompt.trim() || payload.mode || mergedAttachments.length > 0 || payload.initialArtifact) {
       showToast(t('Loaded into Super Agent'), 'info', 'feedback');
     }
-  }, [active, attachments, selection.runtimeId, selection.engine, selection.model, permissionMode, applyChatSnapshot, onChatIdChange, showToast, t]);
+  }, [active, chatId, attachments, selection.runtimeId, selection.engine, selection.model, permissionMode, applyChatSnapshot, onChatIdChange, showToast, t]);
 
   // `/agent?prompt=…` (from an external Agent or a share page): queue it as a
   // new-chat handoff, prefilled but not sent, and drop it from the address bar.
@@ -1548,6 +1575,79 @@ export function SuperAgentWorkspace({
     }
   }, [handlePlayGame]);
 
+  const continueDouyinPublish = useCallback((sourceArtifactId: string, artifactId: string, targetChatId: string | null, options: GamePublishChooseOptions) => {
+    const session = gamePublishSessionFor(sourceArtifactId);
+    if (!session?.open || session.view !== 'list') return;
+    const { gameId, gameTitle, orientation, link, linkToo } = session;
+    if (artifactId !== sourceArtifactId) gamePublishActions.close(sourceArtifactId);
+    gamePublishActions.open({ artifactId, chatId: targetChatId, gameId, gameTitle, orientation, link });
+    gamePublishActions.setLinkToo(artifactId, linkToo);
+    if (targetChatId) {
+      setOpenTabIds(ids => ids.includes(artifactId) ? ids : [...ids, artifactId]);
+      setActiveTabId(artifactId);
+      setViewerOpen(true);
+    }
+    gamePublishActions.choose(artifactId, 'douyin-minigame', options);
+  }, []);
+
+  const handleChooseDouyin = async (sourceArtifactId: string, options: GamePublishChooseOptions) => {
+    const session = gamePublishSessionFor(sourceArtifactId);
+    if (!session?.open || session.view !== 'list') return;
+    const sourceChatId = chatId;
+    const sourceTabId = activeTabId;
+    const lookup = ++publishLookupRef.current;
+    pendingDouyinPublishRef.current = null;
+    const stillCurrent = () => lookup === publishLookupRef.current
+      && routedChatIdRef.current === sourceChatId
+      && activeTabIdRef.current === sourceTabId
+      && gamePublishSessionFor(sourceArtifactId)?.open
+      && gamePublishSessionFor(sourceArtifactId)?.view === 'list';
+    try {
+      const { conversations: linked } = await listSuperAgentChats(session.gameId);
+      if (!stillCurrent()) return;
+      if (!linked.length) {
+        continueDouyinPublish(sourceArtifactId, sourceArtifactId, null, options);
+        return;
+      }
+      const { conversation } = await getSuperAgentChat(linked[0].id, { fresh: true });
+      if (!stillCurrent()) return;
+      const artifact = conversation.artifacts.find(item => item.kind === 'game-project' && item.projectId === session.gameId);
+      if (!artifact) {
+        continueDouyinPublish(sourceArtifactId, sourceArtifactId, null, options);
+        return;
+      }
+      if (conversation.id === sourceChatId && activeChat?.id === conversation.id) {
+        continueDouyinPublish(sourceArtifactId, artifact.id, conversation.id, options);
+        return;
+      }
+      pendingDouyinPublishRef.current = { sourceChatId, chatId: conversation.id, sourceArtifactId, artifactId: artifact.id, options };
+      onChatIdChange(conversation.id);
+    } catch {
+      if (!stillCurrent()) return;
+      pendingDouyinPublishRef.current = null;
+      continueDouyinPublish(sourceArtifactId, sourceArtifactId, null, options);
+      showToast(t('Could not load the game’s conversation. Continue in the publish panel.'), 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (!active) {
+      publishLookupRef.current += 1;
+      pendingDouyinPublishRef.current = null;
+      return;
+    }
+    const pending = pendingDouyinPublishRef.current;
+    if (!pending) return;
+    if (chatId !== pending.chatId) {
+      if (pending.reachedDestination || chatId !== pending.sourceChatId) pendingDouyinPublishRef.current = null;
+      return;
+    }
+    pending.reachedDestination = true;
+    if (activeChat?.id !== pending.chatId) return;
+    pendingDouyinPublishRef.current = null;
+    continueDouyinPublish(pending.sourceArtifactId, pending.artifactId, pending.chatId, pending.options);
+  }, [active, chatId, activeChat?.id, continueDouyinPublish]);
+
   const handleResumeAfterAccount = async (card: SuperAgentActionCard, { plan, key }: { plan?: string; key: string }) => {
     // One stable requestId per card instance: a retry after a lost response replays instead of enqueueing twice.
     let requestId = resumeRequestIds.current.get(key);
@@ -1769,15 +1869,18 @@ export function SuperAgentWorkspace({
   }, [availableRuntimes, agentsLoaded, selection.runtimeId, selection.engine, runtimesDir, t]);
 
   useEffect(() => {
-    if (!active || !pendingAutoSend || !agentsLoaded) return;
-    const needsAgentSync = agentStatus.ready && Boolean(
+    if (!active || !pendingAutoSend || sending) return;
+    const { payload } = pendingAutoSend;
+    const existingChatId = payload.existingChatId;
+    if (!existingChatId && !agentsLoaded) return;
+    const needsAgentSync = !existingChatId && agentStatus.ready && Boolean(
       !lastDefaultKeyRef.current
       && !userPickedEngineRef.current
       && agentDir
       && ((agentDir.default && agents.some(item => item.id === agentDir.default!.agent))
         || (!activeChat && agents.some(item => item.installed && item.auth !== 'signed-out'))),
     );
-    const needsRuntimeSync = agentStatus.ready && Boolean(
+    const needsRuntimeSync = !existingChatId && agentStatus.ready && Boolean(
       runtimesDir
       && !selection.runtimeId
       && (runtimesDir.defaultRuntimeId || !runtimesDir.localDirectAvailable)
@@ -1786,12 +1889,12 @@ export function SuperAgentWorkspace({
     if (needsAgentSync || needsRuntimeSync) return;
     if (dispatchedHandoffIdsRef.current.has(pendingAutoSend.id)) return;
     dispatchedHandoffIdsRef.current.add(pendingAutoSend.id);
-    setPendingAutoSend(null);
+    setPendingAutoSends(current => current.filter(entry => entry.id !== pendingAutoSend.id));
 
-    const { payload } = pendingAutoSend;
+    if (existingChatId && (chatId !== existingChatId || activeChat?.id !== existingChatId)) return;
     const handoffAttachments = payload.attachments ?? [];
 
-    if (!agentStatus.ready) {
+    if (!existingChatId && !agentStatus.ready) {
       setDraftSeed({
         id: pendingAutoSend.id,
         text: payload.prompt,
@@ -1826,9 +1929,8 @@ export function SuperAgentWorkspace({
     void (async () => {
       setSending(true);
       try {
-        const useExisting = payload.newChat === false && activeChat && !payload.initialArtifact;
         const intent = modeChatIntent(payload.mode);
-        const target = useExisting
+        const target = activeChat && (existingChatId || (payload.newChat === false && !payload.initialArtifact))
           ? activeChat
           : (
               await createSuperAgentChat({
@@ -1852,23 +1954,31 @@ export function SuperAgentWorkspace({
           ? crypto.randomUUID()
           : `sa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-        setAttachments([]);
-        setDraftSeed({ id: ++handoffSeqRef.current, text: '' });
+        if (!existingChatId) {
+          setAttachments([]);
+          setDraftSeed({ id: ++handoffSeqRef.current, text: '' });
+        }
         const result = await startSuperAgentTurn(target.id, {
           requestId,
           text: payload.prompt,
           ...(payload.hiddenInstructions?.trim() ? { hiddenInstructions: payload.hiddenInstructions.trim() } : {}),
           ...(payload.contextTags?.length ? { contextTags: payload.contextTags } : {}),
           ...(payload.mode ? { mode: payload.mode } : {}),
-          ...(selection.runtimeId ? { runtimeId: selection.runtimeId } : {}),
-          engine: selection.engine,
-          model: selection.model,
-          reasoning: selection.reasoning,
-          permissionMode,
+          ...(existingChatId ? { followUpBehavior: 'queue' as const } : {
+            ...(selection.runtimeId ? { runtimeId: selection.runtimeId } : {}),
+            engine: selection.engine,
+            model: selection.model,
+            reasoning: selection.reasoning,
+            permissionMode,
+          }),
           attachments: handoffAttachments,
         });
-        applyChatSnapshot(result.conversation, false);
+        if (!existingChatId || routedChatIdRef.current === target.id) applyChatSnapshot(result.conversation, false);
       } catch (error) {
+        if (existingChatId) {
+          showToast(error instanceof Error ? error.message : t('Could not start Super Agent'));
+          return;
+        }
         setAttachments(handoffAttachments);
         setDraftSeed({
           id: ++handoffSeqRef.current,
@@ -1885,7 +1995,9 @@ export function SuperAgentWorkspace({
     })();
   }, [
     active,
+    chatId,
     pendingAutoSend,
+    sending,
     agentsLoaded,
     agentDir,
     agents,
@@ -2186,6 +2298,7 @@ export function SuperAgentWorkspace({
           <ConversationStream
             active={active}
             chat={presentedChat}
+            homeVisit={homeVisit}
             conversations={conversations}
             activeArtifacts={viewerArtifacts}
             requestedMode={requestedMode}
@@ -2368,6 +2481,7 @@ export function SuperAgentWorkspace({
               }}
               onAttachArtifact={handleAttachArtifact}
               onUseGameInAgent={artifact => void handleUseGameInAgent(artifact)}
+              onChooseDouyin={(artifactId, options) => void handleChooseDouyin(artifactId, options)}
               pendingDeployArtifactId={pendingDeployArtifactId}
               onConsumeDeployRequest={() => setPendingDeployArtifactId(null)}
               pendingCodeFile={pendingCodeFile}

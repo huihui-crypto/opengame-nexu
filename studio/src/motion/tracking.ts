@@ -2,6 +2,9 @@ import { createBrowserTracking } from '../../../tracking/browser.ts';
 import { studioEvents } from '../../../tracking/events.ts';
 import type { StudioEvent } from '../../../tracking/events.ts';
 import type { EventFields } from '../../../tracking/core.ts';
+import { getMotionSignedIn, setMotionSignedIn } from './trackingContext';
+
+export { getMotionSignedIn, setMotionSignedIn };
 
 const tracking = createBrowserTracking({ registry: studioEvents, endpoint: '/motion-api/tracking', enabled: false,
   isEnabled: () => navigator.doNotTrack !== '1' });
@@ -48,7 +51,11 @@ export function initializeTracking() {
 export async function trackMotion<E extends StudioEvent>(event: E, properties: EventFields<typeof studioEvents[E]>) {
   await initializeTracking();
   if (configuration === 'unavailable' && navigator.doNotTrack !== '1') return 'config_unavailable' as const;
-  return tracking.track(event, properties);
+  const signedIn = getMotionSignedIn();
+  const enriched = signedIn !== undefined && !('signed_in' in properties) && 'signed_in' in studioEvents[event].fields
+    ? { signed_in: signedIn, ...properties } as EventFields<typeof studioEvents[E]>
+    : properties;
+  return tracking.track(event, enriched);
 }
 export function getMotionTrackingStatus() {
   return { configuration, enabled: tracking.enabled(), pending: tracking.pending(), retryAfterMs: Math.max(0, retryAt - Date.now()) };

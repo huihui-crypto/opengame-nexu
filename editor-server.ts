@@ -10,6 +10,7 @@ import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib';
 import { pluginRoot } from './hyperframes.ts';
 import { resolveDesignSystemFile } from './packages/design-system/index.js';
 import { isSpaRoutePath } from './shared/spa-routes.ts';
+import { currentProductId, type ProductId } from './shared/product-identity.ts';
 
 const gzipAsync = promisify(gzip);
 const brotliAsync = promisify(brotliCompress);
@@ -86,6 +87,14 @@ async function compressPayload(raw: Buffer, encoding: 'br' | 'gzip'): Promise<Bu
   return await gzipAsync(raw, { level: 6 });
 }
 
+export function injectRuntimeProduct(html: string, product: ProductId): string {
+  const tag = `<script>window.__OM_SOURCE_PRODUCT__=${JSON.stringify(product)};</script>`;
+  if (/<head(?:\s[^>]*)?>/i.test(html)) {
+    return html.replace(/<head(?:\s[^>]*)?>/i, match => `${match}${tag}`);
+  }
+  return `${tag}${html}`;
+}
+
 /** Only application bundle and design-system files are exposed, never Studio source or project files. */
 export async function serveEditorFile(url: URL, res: ServerResponse, req?: IncomingMessage): Promise<boolean> {
   let relative: string;
@@ -113,7 +122,9 @@ export async function serveEditorFile(url: URL, res: ServerResponse, req?: Incom
     const info = await stat(fullPath);
     if (!info.isFile()) return false;
 
-    const etag = `W/"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}"`;
+    const isStudioIndex = relative === 'studio/build/index.html';
+    const runtimeProduct = isStudioIndex ? currentProductId() : undefined;
+    const etag = `W/"${info.size.toString(16)}-${Math.trunc(info.mtimeMs).toString(16)}${runtimeProduct ? `-${runtimeProduct}` : ''}"`;
     const cacheControl = resolveCacheControl(url.pathname, designFile);
     const baseHeaders: Record<string, string | number> = {
       'Content-Type': type,
@@ -135,6 +146,12 @@ export async function serveEditorFile(url: URL, res: ServerResponse, req?: Incom
       return true;
     }
 
+    const loadPayload = async (): Promise<Buffer> => {
+      const raw = await readFile(fullPath);
+      if (!runtimeProduct) return raw;
+      return Buffer.from(injectRuntimeProduct(raw.toString('utf8'), runtimeProduct), 'utf8');
+    };
+
     const encoding =
       COMPRESSIBLE_EXTS.has(ext)
       && info.size >= COMPRESS_MIN_BYTES
@@ -146,7 +163,7 @@ export async function serveEditorFile(url: URL, res: ServerResponse, req?: Incom
       const cacheKey = `${fullPath}:${etag}:${encoding}`;
       let cached = staticCompressedCache.get(cacheKey);
       if (!cached) {
-        const raw = await readFile(fullPath);
+        const raw = await loadPayload();
         const compressed = await compressPayload(raw, encoding);
         cached = { encoding, body: compressed };
         staticCompressedCache.set(cacheKey, cached);
@@ -160,7 +177,7 @@ export async function serveEditorFile(url: URL, res: ServerResponse, req?: Incom
       return true;
     }
 
-    const data = await readFile(fullPath);
+    const data = await loadPayload();
     res.writeHead(200, {
       ...baseHeaders,
       'Content-Length': data.length,

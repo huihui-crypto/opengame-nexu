@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CURATED_TOP_EARNING_ORDER } from '../../../../shared/game-contract';
 import { trailerProjectHref } from './GameStudio';
-import { bundledGames, isTopEarningGame, needsGameService, TOP_EARNING_TAG } from './gameCatalog';
+import { bundledGames, isLocalOnly, isTopEarningGame, needsGameService, TOP_EARNING_TAG } from './gameCatalog';
 
 describe('trailerProjectHref', () => {
   it('routes to the canonical /editor/:projectId URL instead of reusing the Game Studio pathname', () => {
@@ -24,6 +24,10 @@ describe('trailerProjectHref', () => {
 });
 
 describe('gameCatalog multi-file detection and internal tags', () => {
+  it('keeps isolated game preview links local when copied', () => {
+    expect(isLocalOnly('http://opengame-preview-0123456789abcdef01234567.localhost:54123/api/games/tidebreaker/play/index.html')).toBe(true);
+  });
+
   it('requires the local game service for sibling assets, src bundles, and relative script/style files', () => {
     expect(needsGameService('<script src="src/system.bundle.js"></script>')).toBe(true);
     expect(needsGameService('<link rel="stylesheet" href="style.css">')).toBe(true);

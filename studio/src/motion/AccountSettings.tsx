@@ -20,7 +20,8 @@ import { MultimodalUpgradeButton } from './MultimodalOfferCard';
 import { activeAccountOffer, MULTIMODAL_CAPABILITIES } from './accountOffer';
 import { ModelAvatar, SettingsError, SettingsLoading } from './settingsPrimitives';
 import offerStyles from './GenerationOffer.module.css';
-import { consumePendingAttribution, evaluateEntitlementRefresh, readAccountPlan, type EntryAttribution } from './entitlementAttribution';
+import { consumePendingAttribution, evaluateEntitlementRefresh, readAccountPlan, resolveSettingsAttribution, type EntryAttribution } from './entitlementAttribution';
+import { setMotionSignedIn } from './trackingContext';
 
 type GuideArea = 'account' | 'provider_detail' | StudioDestination;
 type ShowToast = ReturnType<typeof useToast>['showToast'];
@@ -114,12 +115,13 @@ export function useAccountSummary(options?: { eager?: boolean }) {
   const eager = options?.eager ?? true;
   const [account, updateAccount] = useState<AccountSummary | null>(null), [error, setError] = useState(false);
   const request = useRef(0);
-  const setAccount = useCallback((value: AccountSummary) => { request.current++; updateAccount(value); setError(false); }, []);
+  const setAccount = useCallback((value: AccountSummary) => { request.current++; setMotionSignedIn(value.state === 'signed-in'); updateAccount(value); setError(false); }, []);
   const refresh = useCallback(async (billing = false) => {
     const current = ++request.current;
     try {
       const value = await gatewayRequest<AccountSummary>('settings/account' + (billing ? '?refresh=true' : ''));
       if (current !== request.current) return;
+      setMotionSignedIn(value.state === 'signed-in');
       updateAccount(value); setError(false);
       return value;
     } catch { if (current === request.current) setError(true); }
@@ -138,10 +140,11 @@ type AccountAction = 'login' | 'logout' | 'cancel';
  */
 export function useAccountSignIn(area: GuideArea, showToast: ShowToast, provider?: { id: string; custom?: boolean; protocol?: string }) {
   const { t } = useI18n(), state = useAccountSummary(), [busy, setBusy] = useState(false), previous = useRef<string | undefined>(undefined);
+  const lastSignInAttributionRef = useRef<EntryAttribution | undefined>(undefined);
   const { account, refresh } = state;
   const accountState = account?.state;
   const inGenerator = typeof area !== 'string';
-  const refreshBilling = useCallback(async (checkout?: { hookId: ReturnType<typeof consumePendingAttribution>['hookId']; entryId: string }) => {
+  const refreshBilling = useCallback(async (checkout?: EntryAttribution) => {
     const prevPlan = readAccountPlan(account);
     const updated = await refresh(true);
     const { billingOk, planChanged } = evaluateEntitlementRefresh(prevPlan, updated);
@@ -151,12 +154,31 @@ export function useAccountSignIn(area: GuideArea, showToast: ShowToast, provider
     // The header balance reads its own copy of the account; announce a new balance so it follows.
     if (updated && updated.balance !== account?.balance) window.dispatchEvent(new Event('motion:account-changed'));
     if (checkout) {
-      tracking.reportEntitlementRefresh(inGenerator ? 'creative_studio' : 'settings', checkout.hookId, checkout.entryId, billingOk ? 'success' : 'failure', planChanged);
+      tracking.reportEntitlementRefresh(
+        inGenerator ? 'creative_studio' : 'settings',
+        checkout.hookId,
+        checkout.entryId,
+        billingOk ? 'success' : 'failure',
+        planChanged,
+        {
+          ...(checkout.studioId ? { studio_id: checkout.studioId } : {}),
+          ...(checkout.modality ? { modality: checkout.modality } : {}),
+          ...(checkout.entryFrom ? { entry_from: checkout.entryFrom } : {}),
+        },
+      );
     }
   }, [account, refresh, inGenerator]);
   const trackAction = (element: Parameters<typeof tracking.reportSettingsClick>[1], includeProvider = false, attribution?: EntryAttribution) => {
-    if (inGenerator) reportCreativeClick('creative_studio', 'asset_create', element, destinationTarget(area));
-    else tracking.reportSettingsClick(area, element, { ...(includeProvider && provider ? { provider } : {}), ...(attribution && { hook_id: attribution.hookId, entry_id: attribution.entryId }) });
+    if (inGenerator) reportCreativeClick('creative_studio', 'asset_create', element, destinationTarget(area), attribution);
+    else tracking.reportSettingsClick(area, element, {
+      ...(includeProvider && provider ? { provider } : {}),
+      ...(attribution ? {
+        hook_id: attribution.hookId,
+        entry_id: attribution.entryId,
+        ...(attribution.studioId ? { studio_id: attribution.studioId } : {}),
+        ...(attribution.modality ? { modality: attribution.modality } : {}),
+      } : {}),
+    });
   };
   const subscription = useSubscriptionOpener((element, attribution) => trackAction(element, false, attribution), message => showToast(message, 'error'), refreshBilling);
   // Order matters: the event below triggers a plain refresh, so the billing refresh must be issued after it to win.
@@ -174,24 +196,40 @@ export function useAccountSignIn(area: GuideArea, showToast: ShowToast, provider
     if (inGenerator) void billing.then(notifyProvidersChanged);
   }, [accountState, inGenerator, refresh]);
   async function action(name: AccountAction, cardAttribution?: EntryAttribution) {
-    const attribution = name === 'login' ? cardAttribution ?? consumePendingAttribution('sign_in', inGenerator ? 'studio_generate' : 'settings_signin') : undefined;
+    const fallbackSignInHook = accountState === 'reauth-required'
+      ? 'session_expired_401'
+      : inGenerator
+        ? 'studio_generate'
+        : 'settings_signin';
+    const attribution = name === 'login'
+      ? resolveSettingsAttribution(cardAttribution ?? consumePendingAttribution('sign_in', fallbackSignInHook))
+      : undefined;
+    if (name === 'login') lastSignInAttributionRef.current = attribution;
     if (!cardAttribution) trackAction(name === 'login' ? 'sign_in' : name === 'logout' ? 'sign_out' : 'cancel_sign_in', true, attribution);
     setBusy(true);
     try {
-      state.setAccount(await gatewayRequest<AccountSummary>('settings/account/' + name, 'POST', attribution ?? {}));
+      const payload = attribution ? {
+        hookId: attribution.hookId,
+        entryId: attribution.entryId,
+        ...(attribution.studioId ? { studioId: attribution.studioId } : {}),
+        ...(attribution.modality ? { modality: attribution.modality } : {}),
+        ...(attribution.entryFrom ? { entryFrom: attribution.entryFrom } : {}),
+      } : {};
+      state.setAccount(await gatewayRequest<AccountSummary>('settings/account/' + name, 'POST', payload));
       if (!inGenerator) notifyProvidersChanged();
       window.dispatchEvent(new Event('motion:account-changed'));
     }
     catch (error) { showToast(error instanceof Error ? error.message : t('Could not update account'), 'error'); }
     finally { setBusy(false); }
   }
-  return { state, busy, action, subscription, refreshBilling };
+  const trackBrowserSignIn = () => trackAction('open_browser_signin', false, lastSignInAttributionRef.current);
+  return { state, busy, action, subscription, refreshBilling, trackBrowserSignIn };
 }
 
 /** Signed out: the multimodal sign-in guide. Otherwise the sign-in status card: browser authorization, expiry, failure, connected. */
-export function AccountStatus({ account, busy, action, showToast, renderSignIn }: {
+export function AccountStatus({ account, busy, action, showToast, renderSignIn, onOpenBrowserSignIn }: {
   account: AccountSummary; busy: boolean; action: (name: AccountAction) => void | Promise<void>; showToast: ShowToast;
-  renderSignIn?: () => ReactNode;
+  renderSignIn?: () => ReactNode; onOpenBrowserSignIn?: () => void;
 }) {
   const { t } = useI18n();
   const signedIn = account.state === 'signed-in', pending = account.state === 'authorizing', expired = account.state === 'reauth-required';
@@ -209,7 +247,7 @@ export function AccountStatus({ account, busy, action, showToast, renderSignIn }
     catch { showToast(t('Copy failed. Check clipboard permissions and try again.'), 'error'); }
   }
   // The connector opens the activation page itself; the link is the fallback, and leads only when opening failed.
-  const browserLink = account.authorizationUrl && !syncing && <a className="om-button" data-primary={account.browserOpened === false || undefined} href={account.authorizationUrl} target="_blank" rel="noreferrer">{t(account.browserOpened === false ? 'Continue in browser' : "Didn't open? Click here")}<RemixIcon name="external-link-line" size={15} /></a>;
+  const browserLink = account.authorizationUrl && !syncing && <a className="om-button" data-primary={account.browserOpened === false || undefined} href={account.authorizationUrl} target="_blank" rel="noreferrer" onClick={() => (onOpenBrowserSignIn ? onOpenBrowserSignIn() : tracking.reportSettingsClick('account', 'open_browser_signin'))}>{t(account.browserOpened === false ? 'Continue in browser' : "Didn't open? Click here")}<RemixIcon name="external-link-line" size={15} /></a>;
   if (!signedIn && !pending && !expired && !failure) return renderSignIn ? renderSignIn() : <SignInGuide action={signIn} />;
   return <section className="om-card om-account-summary"><div><h2 className="om-subtitle">{t(signedIn ? 'Connected to OpenDesign' : syncing ? 'Finishing sign-in' : pending ? 'Complete sign-in in your browser' : expired ? 'OpenDesign sign-in expired' : 'Sign in to OpenDesign')}</h2><p className="om-muted">{t(signedIn ? 'Account models and your own providers can be selected side by side.' : expired ? 'Sign in again to keep using your account models, subscription and usage.' : 'Sign in with OpenDesign to sync your models, subscription and usage.')}</p>
     {pending && <p className="om-muted" role="status">{t(syncing ? 'Authorized. Syncing your account…' : account.authorizationUrl ? 'Waiting for browser authorization…' : 'Connecting to OpenDesign. Please wait…')}{account.userCode && !syncing && <strong className="om-account-code">{account.userCode}</strong>}</p>}
@@ -220,7 +258,7 @@ export function AccountStatus({ account, busy, action, showToast, renderSignIn }
 }
 
 export function AccountSettings({ subscription = false, openProviders }: { subscription?: boolean; openProviders: () => void }) {
-  const { t } = useI18n(), toast = useToast(), { state, busy, action, subscription: subscriptionOpener, refreshBilling } = useAccountSignIn('account', toast.showToast);
+  const { t } = useI18n(), toast = useToast(), { state, busy, action, subscription: subscriptionOpener, refreshBilling, trackBrowserSignIn } = useAccountSignIn('account', toast.showToast);
   const visit = useMemo(() => createOfferVisit({ settingsSection: subscription ? 'subscription' : 'account' }), [subscription]);
   const [refreshing, setRefreshing] = useState(false);
   const signedIn = state.account?.state === 'signed-in';
@@ -243,7 +281,7 @@ export function AccountSettings({ subscription = false, openProviders }: { subsc
       {plan && <SubscriptionGuide kind="upgrade" visit={visit}>
         <MultimodalUpgradeButton visit={visit} subscription={subscriptionOpener} label={t('Upgrade to Plus', undefined, 'subscription offer')} />
       </SubscriptionGuide>}
-      {(!subscription || !signedIn) && <AccountStatus account={account} busy={busy} action={action} showToast={toast.showToast}
+      {(!subscription || !signedIn) && <AccountStatus account={account} busy={busy} action={action} showToast={toast.showToast} onOpenBrowserSignIn={trackBrowserSignIn}
         renderSignIn={() => <SubscriptionGuide kind="sign-in" visit={visit}>
           <Button variant="plain" title={t('Sign in with OpenDesign')} disabled={busy} onClick={() => void action('login', reportOfferClick(visit, 'sign_in'))}>
             {t('Sign in now')}<RemixIcon name="arrow-right-up-line" size={12} />

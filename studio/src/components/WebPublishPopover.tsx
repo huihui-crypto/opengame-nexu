@@ -620,6 +620,13 @@ export function WebPublishPopover({
                     type="button"
                     className="om-button om-web-publish-full"
                     onClick={() => {
+                      send('ui_click', {
+                        page_name: 'creative_studio',
+                        area: 'web_publish',
+                        element: 'open_account_settings',
+                        publish_target: targetKind,
+                        hook_id: publishHookId,
+                      });
                       setOpen(false);
                       onOpenAccount();
                     }}

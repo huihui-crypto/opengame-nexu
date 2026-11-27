@@ -1,5 +1,5 @@
 import type { ProviderAdapter } from './providers.ts';
-import { apiJson, publicProviderFetch, ProviderError } from './network.ts';
+import { apiJson, publicProviderFetch, ProviderError, readUpstreamErrorCode } from './network.ts';
 
 /** Explicit OpenAI-compatible image/speech operations; never guesses a video protocol. */
 export const compatibleProvider: ProviderAdapter = {
@@ -13,7 +13,10 @@ export const compatibleProvider: ProviderAdapter = {
       if (typeof parameters.voice !== 'string' || !parameters.voice.trim()) throw new Error('Choose a voice in parameters.voice');
       const response = await fetcher(context.baseUrl + '/audio/speech', { method: 'POST', headers, redirect: 'error', signal: context.signal,
         body: JSON.stringify({ ...parameters, model: job.model.modelId, input: job.prompt }) });
-      if (!response.ok) throw new ProviderError(`Provider HTTP ${response.status}`, response.status);
+      if (!response.ok) {
+        const upstreamCode = await readUpstreamErrorCode(response);
+        throw new ProviderError(`Provider HTTP ${response.status}`, response.status, upstreamCode, 'api');
+      }
       return [Buffer.from(await response.arrayBuffer())];
     }
     if (job.modality !== 'image') throw new Error('This compatible provider supports image generation and speech only');

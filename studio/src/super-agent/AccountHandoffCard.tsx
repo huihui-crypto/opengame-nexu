@@ -41,7 +41,7 @@ export function AccountHandoffCard({ card, handoffKey, onResume, onOpenSettings 
   }, [entryId, hookId, campaign, publish, card.targetKind]);
   const track = (element: 'start_sign_in' | 'open_pricing', id: string) =>
     reportEntitlementGateClick('creative_studio', element, hookId, { studio_id: 'game', entry_id: id, ...campaignFields });
-  const pricingUrl = entryId ? campaignPricingUrl(locale, 'opengame_agent_upgrade', entryId) : undefined;
+  const pricingUrl = entryId ? campaignPricingUrl(locale, 'opengame_agent_upgrade', entryId, { studioId: 'game', modality: 'all' }) : undefined;
   const upgradeLabel = campaign ? t('Upgrade · 50% OFF') : t('Upgrade to Plus');
   // A pricing anchor (user gesture, so popup blockers allow it) instead of a button for upgrade CTAs.
   let plansAnchor: string | undefined;

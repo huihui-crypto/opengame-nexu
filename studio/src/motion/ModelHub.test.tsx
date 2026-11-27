@@ -3,12 +3,14 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
 
-const account = vi.hoisted(() => ({ state: 'signed-out' as string }));
-vi.mock('./AccountSettings', () => ({ useAccountSummary: () => ({ account: { state: account.state } }) }));
+const account = vi.hoisted(() => ({ state: 'signed-out' as string | null }));
+vi.mock('./AccountSettings', () => ({ useAccountSummary: () => ({ account: account.state === null ? null : { state: account.state }, error: false }) }));
 vi.mock('./useMediaCatalog', () => ({ useMediaCatalog: () => ({ catalog: { models: [], status: { providers: [{ id: 'gemini', label: 'Gemini', available: false }] } }, failed: false, retry: () => {} }) }));
 vi.mock('./tracking', () => ({ trackMotion: vi.fn(async () => 'queued') }));
 import { ModelHub } from './ModelHub';
 import { findModelHub } from './modelHubs';
+import { loadReportingTransport } from './reporting';
+import { trackMotion } from './tracking';
 import { I18nProvider } from '../i18n/I18n';
 import modelHubUi from '../i18n/model-hub-ui.json';
 
@@ -262,5 +264,67 @@ it('only mounts showcase card video playback on hover/focus and stops when leavi
     firstCase.video = originalVideo;
     playSpy.mockRestore();
     pauseSpy.mockRestore();
+  }
+});
+
+it('keeps the BF pill impression entry_id aligned with the first click when account status resolves afterwards', async () => {
+  await loadReportingTransport();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(Date.parse('2026-11-25T12:00:00+08:00'));
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ state: 'signed-in' })));
+  vi.mocked(trackMotion).mockClear();
+  const prevState = account.state;
+  try {
+    account.state = null;
+    container = document.createElement('div'); document.body.append(container);
+    root = createRoot(container);
+    await act(async () => root!.render(
+      <I18nProvider initialLocale="en">
+        <ModelHub id="seedance-2-5" onExplore={() => {}} onProvider={() => {}} onModel={() => {}} onUse={() => {}} onSettings={() => {}} />
+      </I18nProvider>,
+    ));
+
+    const tracked = () => vi.mocked(trackMotion).mock.calls.map(([event, properties]) => ({
+      event,
+      properties: properties as Record<string, unknown>,
+    }));
+    expect(tracked().some(item => item.event === 'surface_view' && item.properties.hook_id === 'model_hub_bf_pill')).toBe(false);
+
+    const pill = container.querySelector<HTMLAnchorElement>('.om-hub-promo-pill')!;
+    expect(pill).not.toBeNull();
+    pill.addEventListener('click', event => event.preventDefault());
+    const initialHref = pill.href;
+    await act(async () => {
+      pill.click();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    expect(pill.href).not.toBe(initialHref);
+
+    const click = tracked().find(item => item.event === 'ui_click' && item.properties.hook_id === 'model_hub_bf_pill');
+    expect(click).toBeDefined();
+    const clickedEntryId = String(click!.properties.entry_id);
+
+    account.state = 'signed-in';
+    await act(async () => root!.render(
+      <I18nProvider initialLocale="en">
+        <ModelHub id="seedance-2-5" onExplore={() => {}} onProvider={() => {}} onModel={() => {}} onUse={() => {}} onSettings={() => {}} />
+      </I18nProvider>,
+    ));
+
+    const impressions = tracked().filter(item => item.event === 'surface_view' && item.properties.hook_id === 'model_hub_bf_pill');
+    expect(impressions).toHaveLength(1);
+    expect(impressions[0].properties).toMatchObject({
+      page_name: 'model_hub',
+      area: 'hub_header',
+      element: 'banner',
+      hook_id: 'model_hub_bf_pill',
+      entry_id: clickedEntryId,
+      hub_id: 'seedance-2-5',
+      signed_in: true,
+    });
+  } finally {
+    account.state = prevState;
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
   }
 });

@@ -63,7 +63,7 @@ export function MonetizationGateModal() {
   const gate = useMonetizationGate();
   const { account, refresh } = useAccountSummary({ eager: false });
   const campaign = useBlackFridayActive();
-  const [entryId, setEntryId] = useState(newCampaignEntryId);
+  const [entryId, setEntryId] = useState<string>(newCampaignEntryId);
   const [polling, setPolling] = useState(false);
   const [checking, setChecking] = useState(false);
   const [recovered, setRecovered] = useState(false);
@@ -101,7 +101,7 @@ export function MonetizationGateModal() {
       pollAttemptsRef.current = 0;
       return;
     }
-    const nextEntryId = newCampaignEntryId();
+    const nextEntryId = gate.entryId ?? newCampaignEntryId();
     setEntryId(nextEntryId);
     setPolling(false);
     setRecovered(false);
@@ -110,9 +110,10 @@ export function MonetizationGateModal() {
     recoveredNotifiedRef.current = false;
     pollAttemptsRef.current = 0;
 
-    const hookId = gateHookId(gate.kind);
+    const hookId = gate.hookId ?? gateHookId(gate.kind);
     reportEntitlementModalView(gate.pageName ?? 'creative_studio', hookId, {
       ...(gate.studioId ? { studio_id: gate.studioId } : {}),
+      ...(gate.modality ? { modality: gate.modality } : {}),
       entry_id: nextEntryId,
       ...(campaign ? { campaign_id: BLACK_FRIDAY_CAMPAIGN } : {}),
     });
@@ -169,15 +170,19 @@ export function MonetizationGateModal() {
     const current = activeGateRef.current;
     if (!current || checkInFlightRef.current) return;
     checkInFlightRef.current = true;
-    const hookId = gateHookId(current.kind);
+    const hookId = current.hookId ?? gateHookId(current.kind);
     const pageName = current.pageName ?? 'creative_studio';
     if (!fromPoll) setChecking(true);
     try {
       const updated = await gatewayRequest<AccountSummary>('settings/account?refresh=true');
       const { billingOk, planChanged } = evaluateEntitlementRefresh(baselineRef.current.plan, updated);
       const improved = hasEntitlementImproved(baselineRef.current.plan, baselineRef.current.balance, updated);
+      const refreshExtra = {
+        ...(current.studioId ? { studio_id: current.studioId } : {}),
+        ...(current.modality ? { modality: current.modality } : {}),
+      };
       if (!fromPoll || improved) {
-        reportEntitlementRefresh(pageName, hookId, entryId, billingOk ? 'success' : 'failure', planChanged || improved);
+        reportEntitlementRefresh(pageName, hookId, entryId, billingOk ? 'success' : 'failure', planChanged || improved, refreshExtra);
       }
       if (billingOk) {
         notifyProvidersChanged();
@@ -193,7 +198,10 @@ export function MonetizationGateModal() {
       }
     } catch {
       if (!fromPoll) {
-        reportEntitlementRefresh(pageName, hookId, entryId, 'failure', false);
+        reportEntitlementRefresh(pageName, hookId, entryId, 'failure', false, {
+          ...(current.studioId ? { studio_id: current.studioId } : {}),
+          ...(current.modality ? { modality: current.modality } : {}),
+        });
       }
     } finally {
       checkInFlightRef.current = false;
@@ -233,10 +241,13 @@ export function MonetizationGateModal() {
 
   const isBalance = gate.kind === 'balance';
   const isResolution = gate.kind === 'resolution';
-  const hookId = gateHookId(gate.kind);
+  const hookId = gate.hookId ?? gateHookId(gate.kind);
   const source = gateEntrySource(gate.kind);
   const pageName = gate.pageName ?? 'creative_studio';
-  const pricingHref = campaignPricingUrl(locale, source, entryId);
+  const pricingHref = campaignPricingUrl(locale, source, entryId, {
+    studioId: gate.studioId ?? 'unknown',
+    modality: gate.modality ?? 'all',
+  });
   const currentPlan = account?.state === 'signed-in' && account.plan ? planLabel(account.plan, t) : t('Free plan');
   const balanceText = account?.state === 'signed-in' && account.balance != null ? formatBalance(account.balance) : null;
   const quotaPercent = account?.state === 'signed-in' ? quotaShare(account.quota) : null;
@@ -268,6 +279,7 @@ export function MonetizationGateModal() {
   function handleDismiss() {
     reportEntitlementModalClick(pageName, 'close_modal', hookId, {
       ...(gate?.studioId ? { studio_id: gate.studioId } : {}),
+      ...(gate?.modality ? { modality: gate.modality } : {}),
       entry_id: entryId,
       ...(campaign ? { campaign_id: BLACK_FRIDAY_CAMPAIGN } : {}),
     });
@@ -278,6 +290,7 @@ export function MonetizationGateModal() {
   function handleOpenPricing() {
     reportEntitlementModalClick(pageName, 'open_pricing', hookId, {
       ...(gate?.studioId ? { studio_id: gate.studioId } : {}),
+      ...(gate?.modality ? { modality: gate.modality } : {}),
       entry_id: entryId,
       ...(campaign ? { campaign_id: BLACK_FRIDAY_CAMPAIGN } : {}),
     });
@@ -287,6 +300,7 @@ export function MonetizationGateModal() {
   function handleManualCheck() {
     reportEntitlementModalClick(pageName, 'check_balance', hookId, {
       ...(gate?.studioId ? { studio_id: gate.studioId } : {}),
+      ...(gate?.modality ? { modality: gate.modality } : {}),
       entry_id: entryId,
     });
     void checkEntitlementNow(false);

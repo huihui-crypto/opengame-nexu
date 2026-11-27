@@ -35,9 +35,23 @@ function ensureGatewayInvalidationListener(): void {
   window.addEventListener('motion:gateway-changed', invalidateGatewayCache);
 }
 
+function currentTrackingContext(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const value = new URLSearchParams(window.location.search).get('tracking_context');
+  return value && /^[0-9a-f-]{36}$/i.test(value) ? value : undefined;
+}
+
 export async function gatewayRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   if (method !== 'GET') invalidateGatewayCache();
-  const response = await fetch('/motion-api/' + path, { method, headers: body === undefined ? undefined : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const trackingContext = currentTrackingContext();
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (trackingContext) headers['X-Tracking-Context'] = trackingContext;
+  const response = await fetch('/motion-api/' + path, {
+    method,
+    headers: Object.keys(headers).length ? headers : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
   const data = await response.json();
   if (!response.ok) throw Object.assign(new Error(data.error || 'Model gateway request failed'), data.applied === false ? { applied: false } : {});
   return data as T;

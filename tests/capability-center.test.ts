@@ -11,7 +11,7 @@ import { OpenDesignAccount } from '../gateway/account.ts';
 import { readCappedBytes } from '../gateway/network.ts';
 import { productionApi } from '../gateway/opendesign.ts';
 import { gatewayFor } from '../gateway/service.ts';
-import { clearOpenDesign3dDiscoveryCache } from '../gateway/opendesign-3d.ts';
+import { clearOpenDesign3dDiscoveryCache, normalizeTripoAnimation } from '../gateway/opendesign-3d.ts';
 import {
   capabilityRun,
   registerCapabilityQuoteEstimator,
@@ -1319,6 +1319,51 @@ test('3d-asset capability gates honestly on AMR 3d_generations and executes Trip
       assert.equal(rigPromoted.result.operation, 'rig_retarget');
       assert.equal(rigPromoted.result.animation, 'preset:walk');
 
+      // Multi-clip rigPreset ("mixamo-combat") packs 5 presets into one retarget step, and 1-step operation="retarget" supports multi-clip presets ("mixamo-locomotion") with animate_in_place=true.
+      const beforeCombatPack = submitted3dTasks.length;
+      const combatPack = await api.call('openmotion_capability_run', {
+        action: 'run',
+        requestId: 'tripo-rig-combat-pack',
+        capabilityId: '3d-asset',
+        model: 'opendesign:tripo-3.0',
+        options: { operation: 'rig_retarget', rigPreset: 'mixamo-combat' },
+        parameters: { slim: false, original_model_task_id: rigOnly.result.baseTaskId },
+        name: 'Knight Combat Pack',
+      });
+      assert.equal(submitted3dTasks.length - beforeCombatPack, 2);
+      assert.equal(submitted3dTasks[beforeCombatPack + 1].operation, 'retarget');
+      assert.deepEqual(
+        submitted3dTasks[beforeCombatPack + 1].parameters.animations,
+        ['preset:idle', 'preset:run', 'preset:slash', 'preset:hurt', 'preset:fall'],
+      );
+      assert.equal(submitted3dTasks[beforeCombatPack + 1].parameters.animate_in_place, true);
+      assert.deepEqual(
+        combatPack.result.requestedAnimations,
+        ['preset:idle', 'preset:run', 'preset:slash', 'preset:hurt', 'preset:fall'],
+      );
+
+      const beforeLocoRetarget = submitted3dTasks.length;
+      const locoRetarget = await api.call('openmotion_capability_run', {
+        action: 'run',
+        requestId: 'tripo-retarget-locomotion-pack',
+        capabilityId: '3d-asset',
+        model: 'opendesign:tripo-3.0',
+        options: { operation: 'retarget', rigPreset: 'mixamo-locomotion' },
+        parameters: { slim: false, original_model_task_id: rigOnly.result.rigTaskId },
+        name: 'Knight Locomotion Pack',
+      });
+      assert.equal(submitted3dTasks.length - beforeLocoRetarget, 1);
+      assert.equal(submitted3dTasks[beforeLocoRetarget].operation, 'retarget');
+      assert.deepEqual(
+        submitted3dTasks[beforeLocoRetarget].parameters.animations,
+        ['preset:idle', 'preset:walk', 'preset:run', 'preset:jump'],
+      );
+      assert.equal(submitted3dTasks[beforeLocoRetarget].parameters.animate_in_place, true);
+      assert.deepEqual(
+        locoRetarget.result.requestedAnimations,
+        ['preset:idle', 'preset:walk', 'preset:run', 'preset:jump'],
+      );
+
       // Explicit operation="rig_retarget" with default rigPreset="none" and no animation fails fast with 0 paid submissions.
       const beforeInvalidRigRetarget = submitted3dTasks.length;
       await assert.rejects(
@@ -1607,15 +1652,38 @@ test('3d-world capability gates honestly on AMR world_generations and follows Wo
       assert.deepEqual(worldPosts[beforeAutoRgbd].image_asset_ids, ['world_upload_ref_1']);
       assert.equal(autoRgbd.result.operation, 'images2PosedRGBD');
 
-      //    (b) contextFrames + targetCameras alone auto-infers atlasGenerate
+      //    (b) contextFrames + targetCameras alone auto-infers atlasGenerate (following OD Cloud API schema)
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'world-atlas-malformed-frames',
+          capabilityId: '3d-world',
+          parameters: {
+            contextFrames: [{ frameId: 'f0' }],
+            targetCameras: [{ pose: [0, 0, 1] }],
+          },
+        }),
+        /imageAsset.*camera.*extrinsics.*intrinsics/i,
+      );
       const beforeAutoGen = worldPosts.length;
       const autoGen = await api.call('openmotion_capability_run', {
         action: 'run',
         requestId: 'world-atlas-auto-gen',
         capabilityId: '3d-world',
         parameters: {
-          contextFrames: [{ frameId: 'f0' }],
-          targetCameras: [{ pose: [0, 0, 1] }],
+          contextFrames: [{
+            imageAsset: { assetId: 'asset_frame_0' },
+            depth: { depthAsset: { assetId: 'asset_depth_0' } },
+            camera: {
+              extrinsics: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] },
+              intrinsics: { fx: 900, fy: 900, cx: 640, cy: 360, width: 1280, height: 720 },
+            },
+          }],
+          targetCameras: [{
+            extrinsics: { position: [0.5, 0, 0], quaternion: [0, 0, 0, 1] },
+            intrinsics: { fx: 900, fy: 900, cx: 640, cy: 360, width: 1280, height: 720 },
+          }],
+          returnDepth: false,
         },
         name: 'Auto Atlas Generate',
       });
@@ -1974,3 +2042,212 @@ test('direct account sound-effects discovers via control-key probe, enforces 450
       await gateway.close();
     }
   }, false));
+
+test('3d-asset aligns with OpenDesign Cloud API + Tripo v3 contract: preset normalization, mutual exclusion, v3 rig defaults, seeds, and extended ops', () =>
+  fixture(async store => {
+    clearOpenDesign3dDiscoveryCache();
+    assert.equal(normalizeTripoAnimation('idle'), 'preset:idle');
+    assert.equal(normalizeTripoAnimation('mixamo-slash'), 'preset:slash');
+    assert.equal(normalizeTripoAnimation('preset:run'), 'preset:run');
+    assert.equal(normalizeTripoAnimation('quadruped:walk'), 'preset:quadruped:walk');
+    assert.throws(() => normalizeTripoAnimation('custom_unrecognized_flip'), /preset:\*/);
+
+    const api = service(store);
+    const gateway = gatewayFor(store);
+    const glbBytes = makeTinyGlb();
+    const submitted: any[] = [];
+    const downloadedArtifacts: string[] = [];
+
+    gateway.options.pollMs = 10;
+    gateway.options.fetcher = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/v1/media/models')) {
+        return Response.json({ models: [{ model: 'tripo-3.0', kind: '3d_generations', capabilities: {} }] });
+      }
+      if (url.endsWith('/api/v1/media/3d/tasks') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body ?? '{}'));
+        submitted.push(body);
+        return Response.json({ task_id: `tripo_${submitted.length}`, status: 'queued' }, { status: 202 });
+      }
+      if (url.includes('/api/v1/media/3d/tasks/') && url.includes('/content')) {
+        downloadedArtifacts.push(url);
+        return new Response(glbBytes, { status: 200, headers: { 'Content-Type': 'model/gltf-binary' } });
+      }
+      if (url.includes('/api/v1/media/3d/tasks/tripo_')) {
+        const id = url.split('/').pop()!;
+        return Response.json({
+          task_id: id,
+          status: 'succeeded',
+          artifacts: [
+            { name: 'base_model', format: 'glb', content_path: `/api/v1/media/3d/tasks/${id}/content?artifact=base_model` },
+            { name: 'pbr_model', format: 'glb', content_path: `/api/v1/media/3d/tasks/${id}/content?artifact=pbr_model` },
+          ],
+        });
+      }
+      return Response.json({ error: `unexpected ${url}` }, { status: 404 });
+    }) as typeof fetch;
+
+    await gateway.configureProvider('opendesign', { apiKey: 'sk-test-opendesign', baseUrl: 'https://amr-mock.example.com', enabled: true });
+
+    try {
+      // 1) Bare short names ["idle","run","slash"] normalize to preset:* AND omit conflicting `animation` even when rigPreset is set.
+      await api.call('openmotion_capability_run', {
+        action: 'run',
+        requestId: 'tripo-retarget-bare-names',
+        capabilityId: '3d-asset',
+        model: 'opendesign:tripo-3.0',
+        options: { operation: 'retarget', rigPreset: 'mixamo-idle' },
+        parameters: {
+          slim: false,
+          original_model_task_id: 'rig_task_prior',
+          animations: ['idle', 'run', 'slash'],
+        },
+      });
+      assert.equal(submitted.length, 1);
+      assert.deepEqual(submitted[0].parameters.animations, ['preset:idle', 'preset:run', 'preset:slash']);
+      assert.equal('animation' in submitted[0].parameters, false);
+      assert.match(downloadedArtifacts[0], /artifact=pbr_model/);
+
+      // 2) Missing animation or invalid animation on retarget fails fast locally with 0 submissions.
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-retarget-no-anim',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'retarget' },
+          parameters: { original_model_task_id: 'rig_task_prior' },
+        }),
+        /requires an animation/,
+      );
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-retarget-bad-anim',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'retarget' },
+          parameters: { original_model_task_id: 'rig_task_prior', animations: ['somersault_xyz'] },
+        }),
+        /preset:\*/,
+      );
+      assert.equal(submitted.length, 1);
+
+      // 3) Quadruped rig auto-selects Tripo v3 model_version; mesh forwards model_seed & texture_seed;
+      //    OD-documented GLB ops are discoverable and accepted via options.operation, while non-GLB ops fail fast with 0 submissions.
+      const described3d = await api.call('openmotion_capability_discover', { action: 'describe', capabilityId: '3d-asset' });
+      const opChoices = described3d.capability.input.controls
+        .find((c: any) => c.key === 'operation')
+        ?.choices.map((c: any) => c.value);
+      for (const expectedOp of ['multiview_to_model', 'decimate', 'texture', 'convert', 'segment', 'smartsegment', 'complete', 'uv', 'edit']) {
+        assert.ok(opChoices?.includes(expectedOp), `expected 3d-asset discovery to expose operation=${expectedOp}`);
+      }
+
+      await api.call('openmotion_capability_run', {
+        action: 'run',
+        requestId: 'tripo-quadruped-seeds',
+        capabilityId: '3d-asset',
+        model: 'opendesign:tripo-3.0',
+        prompt: 'Armored battle wolf',
+        options: { operation: 'rig' },
+        parameters: { slim: false, rig_type: 'quadruped', model_seed: 123, texture_seed: 456 },
+      });
+      assert.equal(submitted[1].parameters.model_seed, 123);
+      assert.equal(submitted[1].parameters.texture_seed, 456);
+      assert.equal(submitted[2].operation, 'rig');
+      assert.equal(submitted[2].parameters.rig_type, 'quadruped');
+      assert.equal(submitted[2].parameters.model_version, 'v3.0-20260909');
+
+      await api.call('openmotion_capability_run', {
+        action: 'run',
+        requestId: 'tripo-segment-op',
+        capabilityId: '3d-asset',
+        model: 'opendesign:tripo-3.0',
+        options: { operation: 'segment' },
+        parameters: { slim: false, original_model_task_id: 'tripo_2' },
+      });
+      assert.equal(submitted[3].operation, 'segment');
+
+      const submittedBeforeRejects = submitted.length;
+      for (const nonGlbOp of ['image_to_splat', 'text_to_image', 'rig-check', '/v3/custom']) {
+        await assert.rejects(
+          api.call('openmotion_capability_run', {
+            action: 'run',
+            requestId: `tripo-reject-${nonGlbOp.replace(/[^a-z0-9]/gi, '_')}`,
+            capabilityId: '3d-asset',
+            model: 'opendesign:tripo-3.0',
+            parameters: { operation: nonGlbOp, original_model_task_id: 'tripo_2' },
+          }),
+          /Unsupported 3d-asset operation/,
+        );
+      }
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-reject-non-glb-format',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'convert' },
+          parameters: { original_model_task_id: 'tripo_2', out_format: 'fbx' },
+        }),
+        /GLB outputs/i,
+      );
+
+      // 4) Per-operation reference count guards prevent silently dropping pinned images after maxReferences was raised to 4.
+      const refA = await api.call('openmotion_asset_manage', {
+        action: 'import',
+        requestId: 'tripo-ref-guard-a',
+        sourcePath: await makePng(store.directory, 'tripo-ref-a.png', '0x2563eb'),
+        name: 'Tripo Ref A',
+      });
+      const refB = await api.call('openmotion_asset_manage', {
+        action: 'import',
+        requestId: 'tripo-ref-guard-b',
+        sourcePath: await makePng(store.directory, 'tripo-ref-b.png', '0xdc2626'),
+        name: 'Tripo Ref B',
+      });
+      const twoRefs = [
+        { assetId: refA.asset.id, versionId: refA.asset.currentVersionId },
+        { assetId: refB.asset.id, versionId: refB.asset.currentVersionId },
+      ];
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-reject-t2m-multi-ref',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'text_to_model' },
+          prompt: 'Armored battle wolf',
+          references: twoRefs,
+        }),
+        /text_to_model does not accept reference images/,
+      );
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-reject-rig-multi-ref',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'rig' },
+          prompt: 'Armored battle wolf',
+          references: twoRefs,
+        }),
+        /accepts at most 1 reference image/,
+      );
+      await assert.rejects(
+        api.call('openmotion_capability_run', {
+          action: 'run',
+          requestId: 'tripo-reject-chain-ref',
+          capabilityId: '3d-asset',
+          model: 'opendesign:tripo-3.0',
+          options: { operation: 'segment' },
+          parameters: { original_model_task_id: 'tripo_2' },
+          references: [twoRefs[0]],
+        }),
+        /does not accept reference images/,
+      );
+      assert.equal(submitted.length, submittedBeforeRejects, 'non-GLB operations, formats, and mismatched reference counts must fail fast before submitting paid tasks');
+    } finally {
+      await gateway.close();
+    }
+  }));

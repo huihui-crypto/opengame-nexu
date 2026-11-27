@@ -6,6 +6,7 @@ import { useI18n } from '../i18n/I18n';
 import { gatewayRequest } from './gatewayClient';
 import { notifyProvidersChanged } from './useProviderDirectory';
 import type { CreativePage } from './exploreTracking';
+import { newTrackingId } from './reporting';
 import { trackMotion } from './tracking';
 import styles from './StartEntry.module.css';
 
@@ -21,14 +22,44 @@ export function StartEntry({ account, trackingPage, openAccount }: { account: Ac
   const authorizing = account.state === 'authorizing';
 
   async function start(event: MouseEvent) {
-    void trackMotion('ui_click', { page_name: trackingPage, area: 'header', element: 'start_sign_in', interaction_method: event.detail === 0 ? 'keyboard' : 'pointer' });
+    const interactionMethod = event.detail === 0 ? 'keyboard' : 'pointer';
     if (authorizing) {
-      if (account.authorizationUrl) window.open(account.authorizationUrl, '_blank', 'noopener,noreferrer'); else openAccount();
+      if (account.authorizationUrl) {
+        void trackMotion('ui_click', {
+          page_name: trackingPage,
+          area: 'header',
+          element: 'open_browser_signin',
+          hook_id: 'header_signin',
+          interaction_method: interactionMethod,
+        });
+        window.open(account.authorizationUrl, '_blank', 'noopener,noreferrer');
+      } else {
+        void trackMotion('ui_click', {
+          page_name: trackingPage,
+          area: 'header',
+          element: 'start_sign_in',
+          hook_id: 'header_signin',
+          interaction_method: interactionMethod,
+        });
+        openAccount();
+      }
       return;
     }
+    const entryId = newTrackingId();
+    void trackMotion('ui_click', {
+      page_name: trackingPage,
+      area: 'header',
+      element: 'start_sign_in',
+      hook_id: 'header_signin',
+      entry_id: entryId,
+      interaction_method: interactionMethod,
+    });
     setBusy(true);
     try {
-      const started = await gatewayRequest<AccountSummary>('settings/account/login', 'POST', {});
+      const started = await gatewayRequest<AccountSummary>('settings/account/login', 'POST', {
+        hookId: 'header_signin',
+        entryId,
+      });
       notifyProvidersChanged();
       window.dispatchEvent(new Event('motion:account-changed'));
       // A sign-in that fails as it starts still answers normally: show its reason and recovery.

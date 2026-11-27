@@ -189,7 +189,8 @@ export async function updateSuperAgentPreferences(patch: Partial<SuperAgentPrefe
   return saRequest<{ preferences: SuperAgentPreferences }>('/preferences', 'PATCH', patch);
 }
 
-export async function listSuperAgentChats() {
+export async function listSuperAgentChats(gameId?: string) {
+  if (gameId) return saRequest<{ conversations: SuperAgentChatSummary[] }>(`/chats?${new URLSearchParams({ gameId })}`);
   if (isClientCacheEnabled() && chatListCache && chatListCache.expiresAt > Date.now()) {
     return { conversations: chatListCache.value };
   }

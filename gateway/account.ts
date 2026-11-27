@@ -6,15 +6,23 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { AccountAttempt, AccountErrorCode, AccountSummary, DirectoryModel } from '../shared/provider-directory.ts';
 import type { GenerationJob, Model } from '../shared/gateway.ts';
-import { attributedEntryId, PRODUCT_UTM_SOURCE } from '../shared/product-identity.ts';
-import { validField, type EventFields } from '../tracking/core.ts';
-import { accountErrorKinds, accountStages, entitlementHookIds, type EntitlementHookId, type omEvents } from '../tracking/events.ts';
+import {
+  attributedEntryId,
+  buildPlacementId,
+  cleanBillingUrl,
+  currentProductId,
+  encodeMonetizationShortlink,
+  type MonetizationModality,
+} from '../shared/product-identity.ts';
+import { slug, validField, type EventFields } from '../tracking/core.ts';
+import { accountErrorKinds, accountStages, entitlementHookIds, providerSetupEntries, type EntitlementHookId, type ProviderSetupEntry, type omEvents } from '../tracking/events.ts';
+import { validHostContext, type HostContext } from '../tracking/host.ts';
 import { readSettings, writeSettings } from './settings-storage.ts';
 import { planMediaEntitlement } from './account-media.ts';
 import { registeredProvider } from '../shared/provider-registry.ts';
 import { defaultVideoAudioEnabled, resolveGenerationParameters } from '../shared/generation-options.ts';
 import { isSfxModel } from '../shared/audio-kind.ts';
-import { apiJson, MAX_MEDIA_BYTES, ProviderError, readCappedBytes, retryRead, streamMedia, type Fetcher } from './network.ts';
+import { apiJson, MAX_MEDIA_BYTES, ProviderError, readCappedBytes, retryRead, streamMedia, withErrorMeta, type Fetcher } from './network.ts';
 import { cloudImageParameters, mediaSubmitHeaders, productionApi, uploadInputs } from './opendesign.ts';
 import type { ProviderContext } from './providers.ts';
 import { resumableDownload, type DownloadProgress } from './resumable-download.ts';
@@ -35,12 +43,37 @@ async function openSystemBrowser(url: string) {
 }
 const consoleUrl = registeredProvider('account')!.website!;
 export type SignInRecord = EventFields<typeof omEvents['account_sign_in_result']>;
-export type AccountAttribution = { hookId?: unknown; entryId?: unknown };
+export type AccountAttribution = {
+  hookId?: unknown;
+  entryId?: unknown;
+  studioId?: unknown;
+  modality?: unknown;
+  entryFrom?: unknown;
+  hostContext?: HostContext;
+};
+export type MonetizationLinkOptions = {
+  telemetryEnabled?: boolean;
+  channel?: 'mcp_stdio' | 'mcp_http';
+  host?: string;
+  touchpoint?: string;
+  studioId?: string;
+  modality?: MonetizationModality;
+};
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validHookId = (value: unknown): EntitlementHookId | undefined =>
   typeof value === 'string' && (entitlementHookIds as readonly string[]).includes(value) ? value as EntitlementHookId : undefined;
 const validEntryId = (value: unknown): string | undefined =>
   typeof value === 'string' && uuidPattern.test(value) ? value : undefined;
+const validStudioId = (value: unknown): string | undefined =>
+  typeof value === 'string' && slug.test(value) ? value : undefined;
+const validModality = (value: unknown): MonetizationModality | undefined =>
+  typeof value === 'string' && (['image', 'video', 'audio', 'all'] as const).includes(value as MonetizationModality)
+    ? value as MonetizationModality
+    : undefined;
+const validEntryFrom = (value: unknown): ProviderSetupEntry | undefined =>
+  typeof value === 'string' && (providerSetupEntries as readonly string[]).includes(value)
+    ? value as ProviderSetupEntry
+    : undefined;
 export type OpenDesignWorkspacePrincipal = {
   workspaceId: string;
   workspaceName: string;
@@ -69,7 +102,7 @@ type AccountOptions = {
   fetcher?: Fetcher;
   download?: typeof import('./network.ts').streamMedia;
   /** Receives one record per finished sign-in attempt. */
-  track?: (record: SignInRecord) => void;
+  track?: (record: SignInRecord, host?: HostContext) => void;
 };
 
 // Connector stdout contract for `login --completion-receipt=stdin-v1` with `jsonl-v1` stage lines.
@@ -128,6 +161,7 @@ const requestMessages: Record<string, string> = {
   model_access_denied: 'Your OpenDesign plan does not include this model. Choose another model or upgrade your plan.',
   insufficient_balance: 'Your OpenDesign balance is too low for this request. Top up, then try again.',
   tier_limit_exceeded: 'OpenDesign media rate or concurrency limit reached. Wait for running tasks to finish, then try again.',
+  video_concurrency_limit_exceeded: 'OpenDesign media rate or concurrency limit reached. Wait for running tasks to finish, then try again.',
   provider_error: 'The model provider could not complete this request. Try again later or choose another model.',
   request_state_unknown: 'OpenDesign could not confirm whether this request ran, so it was not resubmitted. Check your OpenDesign history before retrying.',
   media_execution_unknown: 'OpenDesign could not confirm whether this request ran, so it was not resubmitted. Check your OpenDesign history before retrying.',
@@ -150,7 +184,8 @@ export const accountMediaMessages = [...new Set([...Object.values(requestMessage
 export class AccountRequestError extends Error {
   readonly status?: number;
   readonly code?: string;
-  constructor(stderr: string) {
+  readonly upstreamCode?: string;
+  constructor(stderr: string, options?: { cause?: unknown; media?: boolean }) {
     let parsedEnvelope: { status?: number; code?: string } | undefined;
     try {
       const parsed: unknown = JSON.parse(stderr.trim());
@@ -170,15 +205,19 @@ export class AccountRequestError extends Error {
       // Plain-text Vela stderr falls through to regex parsing below.
     }
     // Generic API errors read `API request failed with status 403: code`; media commands read `<text> (code, HTTP 400)`.
-    const api = /API request failed with status (\d{3})(?:: ([a-z0-9_]{1,64})(?=\s|$))?/.exec(stderr);
+    const api = /API request failed with status (\d{3})(?:: ([A-Za-z0-9_]{1,64})(?=\s|$))?/.exec(stderr);
     // A response without a JSON body has an empty code: `(, HTTP 502)`.
     const media = parsedEnvelope || api ? undefined : [...stderr.matchAll(/\(([^,()]{0,64}), HTTP (\d{3})\)/g)].at(-1);
     const status = parsedEnvelope?.status ?? (api ? Number(api[1]) : media ? Number(media[2]) : undefined);
-    const code = parsedEnvelope?.code ?? (api ? api[2] : media && /^[a-z0-9_]{1,64}$/.test(media[1]) ? media[1] : undefined);
+    const code = parsedEnvelope?.code ?? (api ? api[2] : media && /^[A-Za-z0-9_-]{1,64}$/.test(media[1]) ? media[1] : undefined);
     // Local CLI flag/argument rejections exit without an HTTP status; do not misreport them as connection or sign-in failures.
     const cliInvalid = !status && !code && /(?:^|\n)Error: (?:if any flags in the group |unknown (?:shorthand )?flag:|invalid argument |required flag\(s\) |flag needs an argument:)/.test(stderr);
-    super((code && requestMessages[code]) || (cliInvalid ? requestMessages.invalid_request : status === 401 ? requestMessages.unauthorized : status ? jobMessages.service : jobMessages.connection));
-    this.status = status; this.code = code;
+    const isMediaRequest = options?.media ?? Boolean(media);
+    super(
+      (code && requestMessages[code]) || (cliInvalid ? requestMessages.invalid_request : status === 401 ? requestMessages.unauthorized : status === 429 && isMediaRequest ? requestMessages.tier_limit_exceeded : status ? jobMessages.service : jobMessages.connection),
+      options?.cause !== undefined ? { cause: options.cause } : undefined,
+    );
+    this.status = status; this.code = code; this.upstreamCode = code;
   }
 }
 class SignInFailure extends Error {
@@ -219,14 +258,19 @@ const withBuiltinAudio = (models: DirectoryModel[]): DirectoryModel[] => {
 /** OpenDesign's versioned CLI owns device authorization and credentials. */
 
 /**
- * Console billing attribution shared by every subscription link. `od_entry_source` must stay the AMR-registered
- * `openmotion_manage_subscription`: an unregistered value makes AMR drop the whole attribution, including od_entry_id.
+ * Console billing attribution shared by Settings subscription links. Uses the 4D `od_*` protocol with no `utm_*` params.
  */
-function consoleAttributionParams(entryId: string): Record<string, string> {
+function consoleAttributionParams(entryId: string, attribution?: AccountAttribution): Record<string, string> {
+  const hookId = validHookId(attribution?.hookId) ?? 'settings_subscription';
+  const studioId = validStudioId(attribution?.studioId) ?? 'settings';
+  const modality = validModality(attribution?.modality) ?? 'all';
   return {
-    billing: 'plan', od_origin: 'openmotion',
-    od_entry_source: 'openmotion_manage_subscription',
-    od_entry_id: attributedEntryId(entryId), od_entry_at: new Date().toISOString(),
+    billing: 'plan',
+    od_origin: currentProductId(),
+    od_entry_source: hookId,
+    od_entry_id: attributedEntryId(entryId),
+    od_entry_at: new Date().toISOString(),
+    od_placement_id: buildPlacementId('gui', 'studio', studioId, modality),
   };
 }
 
@@ -262,7 +306,19 @@ export class OpenDesignAccount {
   /** The connector exited with confirmed credentials and the session and model catalogue are being set up. */
   private syncing = false;
   /** Times since the sign-in click, for the attempt record. */
-  private clock?: { start: number; entryId: string; occurredAt: string; hookId?: EntitlementHookId; prepared?: number; link?: number; approved?: number };
+  private clock?: {
+    start: number;
+    entryId: string;
+    occurredAt: string;
+    hookId?: EntitlementHookId;
+    studioId?: string;
+    modality?: MonetizationModality;
+    entryFrom?: ProviderSetupEntry;
+    hostContext?: HostContext;
+    prepared?: number;
+    link?: number;
+    approved?: number;
+  };
   private preparing?: Promise<string>;
   /** Attempts already reported; two cancels racing each other must not count one attempt twice. */
   private reported = new WeakSet<AccountAttempt>();
@@ -364,7 +420,12 @@ export class OpenDesignAccount {
   private env() {
     // A different application's environment keys must not override this account session.
     const env: NodeJS.ProcessEnv = { ...process.env, AMR_HOME: this.home, OPEN_DESIGN_AMR_PROFILE: 'prod', VELA_PROFILE: 'prod' };
-    for (const key of ['VELA_RUNTIME_KEY', 'VELA_CONTROL_KEY', 'VELA_LINK_URL', 'VELA_API_URL', 'OD_AMR_ENDPOINT_BINDING', 'VELA_SOURCE_PRODUCT', 'VELA_OPENMOTION_JOB_ID']) delete env[key];
+    for (const key of [
+      'VELA_RUNTIME_KEY', 'VELA_CONTROL_KEY', 'VELA_LINK_URL', 'VELA_API_URL', 'OD_AMR_ENDPOINT_BINDING',
+      'VELA_SOURCE_PRODUCT', 'VELA_OPENMOTION_JOB_ID',
+      'OPEN_DESIGN_AMR_ORIGIN', 'OPEN_DESIGN_AMR_ENTRY_ID', 'OPEN_DESIGN_AMR_ENTRY_SOURCE',
+      'OPEN_DESIGN_AMR_ENTRY_AT', 'OPEN_DESIGN_AMR_PLACEMENT_ID', 'OPEN_DESIGN_AMR_CAMPAIGN_ID', 'OPEN_DESIGN_AMR_DEVICE_ID',
+    ]) delete env[key];
     return env;
   }
   private async credentials() {
@@ -395,16 +456,20 @@ export class OpenDesignAccount {
     // Whether the browser opened is its own field; the error kind belongs to the stage that stopped the attempt.
     const errorKind = attempt.stages.findLast(entry => entry.split(':')[1] === 'failed' && !entry.startsWith('browser_open_result'))?.split(':')[2];
     const browser = attempt.stages.find(entry => entry.startsWith('browser_open_result:'))?.split(':')[1];
+    const product = currentProductId();
     const record = { attempt_id: attempt.id, outcome, error_code: errorCode, connector_problem: connector?.problem, connector_version: connectorVersion, resumed: Boolean(attempt.resumed),
-      source_product: 'openmotion', source_detail: 'openmotion_editor_login',
+      source_product: product, source_detail: this.clock.hookId ?? `${product}_editor_login`,
       ...(this.clock.hookId ? { hook_id: this.clock.hookId } : {}),
       entry_id: this.clock.entryId, entry_occurred_at: this.clock.occurredAt,
+      ...(this.clock.entryFrom ? { entry_from: this.clock.entryFrom } : {}),
+      ...(this.clock.studioId ? { studio_id: this.clock.studioId } : {}),
+      ...(this.clock.modality ? { modality: this.clock.modality } : {}),
       ...(outcome === 'success' && validField('code', amrUserId) ? { amr_user_id: amrUserId } : {}),
       last_stage: lastStage, last_result: lastResult, browser_opened: browser === undefined ? undefined : browser === 'success', receipt: attempt.receipt,
       error_kind: errorKind === undefined ? undefined : (accountErrorKinds as readonly string[]).includes(errorKind) ? errorKind : 'unknown',
       exit_code: typeof attempt.exitCode === 'number' && attempt.exitCode >= 0 ? attempt.exitCode : undefined,
       duration_ms: since(performance.now()), prepare_ms: since(prepared), link_ms: since(link), approved_ms: since(approved) };
-    try { this.options.track(Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as SignInRecord); }
+    try { this.options.track(Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as SignInRecord, this.clock.hostContext); }
     catch { /* Telemetry never affects sign-in. */ }
   }
   private commit(generation: number, task: () => Promise<void>) {
@@ -447,7 +512,8 @@ export class OpenDesignAccount {
       });
       return stdout;
     } catch (error) {
-      throw new AccountRequestError(String((error as { stderr?: unknown }).stderr ?? ''));
+      const mediaCommand = args[0] === 'image' || args[0] === 'video' || args[0] === 'audio' || args[0] === 'media';
+      throw new AccountRequestError(String((error as { stderr?: unknown }).stderr ?? ''), { cause: error, media: mediaCommand });
     }
   }
   async run(args: string[], signal?: AbortSignal, envOverrides?: Record<string, string>) {
@@ -686,11 +752,21 @@ export class OpenDesignAccount {
     this.authorizationUrl = undefined; this.userCode = undefined; this.syncing = false;
     const generation = ++this.generation;
     this.attempt = { id: randomUUID(), stages: [], persisted: false };
+    const entryFrom = validEntryFrom(attribution?.entryFrom);
+    const derivedStudioId = entryFrom === 'agent_game_publish_signed_out'
+      ? 'game'
+      : entryFrom === 'agent_design_deploy_signed_out'
+        ? 'design'
+        : undefined;
     this.clock = {
       start: performance.now(),
       entryId: validEntryId(attribution?.entryId) ?? randomUUID(),
       occurredAt: new Date().toISOString(),
       hookId: validHookId(attribution?.hookId),
+      studioId: validStudioId(attribution?.studioId) ?? derivedStudioId,
+      modality: validModality(attribution?.modality),
+      entryFrom,
+      hostContext: validHostContext(attribution?.hostContext) ? attribution.hostContext : undefined,
     };
     void this.authorize(generation).catch(error => {
       if (this.generation !== generation) return;
@@ -751,7 +827,17 @@ export class OpenDesignAccount {
     if (resumed) attempt.resumed = true;
     const clock = this.clock!;
     clock.link = clock.approved = undefined;
-    const env = { ...this.env(), OPEN_DESIGN_AMR_AUTH_STAGE_FORMAT: 'jsonl-v1', OPEN_DESIGN_AMR_AUTH_ATTEMPT_ID: attempt.id };
+    const product = currentProductId();
+    const env = {
+      ...this.env(),
+      OPEN_DESIGN_AMR_AUTH_STAGE_FORMAT: 'jsonl-v1',
+      OPEN_DESIGN_AMR_AUTH_ATTEMPT_ID: attempt.id,
+      OPEN_DESIGN_AMR_ORIGIN: product,
+      OPEN_DESIGN_AMR_ENTRY_ID: attributedEntryId(clock.entryId),
+      OPEN_DESIGN_AMR_ENTRY_SOURCE: clock.hookId ?? `${product}_editor_login`,
+      OPEN_DESIGN_AMR_ENTRY_AT: clock.occurredAt,
+      OPEN_DESIGN_AMR_PLACEMENT_ID: buildPlacementId('gui', 'studio', clock.studioId ?? 'unknown', clock.modality ?? 'all'),
+    };
     const child = (this.options.spawn ?? spawn)(binary, ['login', '--completion-receipt=stdin-v1'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
     let output = '', partial = '', protocol = false, cancelled = false;
@@ -808,9 +894,41 @@ export class OpenDesignAccount {
     return { exitCode: attempt.exitCode, cancelled };
   }
   /** Returns a shareable Agent upgrade link without account intents or browser side effects. */
-  upgradeLink(entryId: string) {
-    const params = new URLSearchParams({ ...consoleAttributionParams(entryId), utm_source: PRODUCT_UTM_SOURCE, utm_medium: 'agent' });
-    return { url: consoleUrl + '/dashboard?' + params };
+  upgradeLink(entryId: string, options: MonetizationLinkOptions = {}) {
+    if (options.telemetryEnabled === false) {
+      return { url: cleanBillingUrl('d') };
+    }
+    return {
+      url: encodeMonetizationShortlink({
+        target: 'd',
+        entryId,
+        product: currentProductId(),
+        channel: options.channel ?? 'mcp_stdio',
+        host: options.host ?? 'unknown',
+        touchpoint: options.touchpoint ?? 'agent_media_upgrade_free',
+        studioId: options.studioId ?? 'unknown',
+        modality: options.modality ?? 'all',
+      }),
+    };
+  }
+
+  /** Returns a shareable Agent recharge/top-up link without account intents or browser side effects. */
+  topupLink(entryId: string, options: MonetizationLinkOptions = {}) {
+    if (options.telemetryEnabled === false) {
+      return { url: cleanBillingUrl('r') };
+    }
+    return {
+      url: encodeMonetizationShortlink({
+        target: 'r',
+        entryId,
+        product: currentProductId(),
+        channel: options.channel ?? 'mcp_stdio',
+        host: options.host ?? 'unknown',
+        touchpoint: options.touchpoint ?? 'agent_media_balance_low',
+        studioId: options.studioId ?? 'unknown',
+        modality: options.modality ?? 'all',
+      }),
+    };
   }
 
   /**
@@ -819,8 +937,7 @@ export class OpenDesignAccount {
    */
   async openSubscription(launch: (url: string) => Promise<void> = openSystemBrowser, attribution?: AccountAttribution) {
     const entryId = validEntryId(attribution?.entryId) ?? randomUUID();
-    // Preserve the AMR-registered entry source so AMR keeps the full attribution (including od_entry_id).
-    const target = '/dashboard?' + new URLSearchParams(consoleAttributionParams(entryId));
+    const target = '/dashboard?' + new URLSearchParams(consoleAttributionParams(entryId, attribution));
     let url = consoleUrl + target;
     const profile = await this.profile();
     if (signedInProfile(profile) && profile!.apiUrl?.replace(/\/$/, '') === productionApi && await this.identity()) {
@@ -1014,7 +1131,12 @@ export class OpenDesignAccount {
       // The task already exists and may be billed; a failed read or download must not suggest submitting it again.
       const task = JSON.parse(await this.run([kind, 'get', taskId, '--output', output, '--json'], signal).catch(error => {
         // A rejected sign-in still needs its sign-out hint: the account keeps reporting signed-in after a media 401.
-        if (error instanceof AccountRequestError) throw new Error(error.status === 401 || error.code === 'unauthorized' ? jobMessages.resultUnauthorized : jobMessages.resultUnreadable);
+        if (error instanceof AccountRequestError) {
+          throw withErrorMeta(
+            new Error(error.status === 401 || error.code === 'unauthorized' ? jobMessages.resultUnauthorized : jobMessages.resultUnreadable, { cause: error }),
+            { status: error.status, upstreamCode: error.code },
+          );
+        }
         throw error;
       }));
       if (task.task_id !== taskId) throw new Error('Account provider returned an unexpected task');
@@ -1023,7 +1145,12 @@ export class OpenDesignAccount {
         if (!info.isFile() || info.isSymbolicLink() || info.size > 256 * 1024 * 1024) throw new Error('Invalid account media output');
         return [await readFile(output)];
       }
-      if (['failed', 'cancelled', 'canceled'].includes(task.status)) throw new Error(jobMessages.taskFailed);
+      if (['failed', 'cancelled', 'canceled'].includes(task.status)) {
+        await progress('remote_failed');
+        throw withErrorMeta(new Error(jobMessages.taskFailed), {
+          upstreamCode: typeof task.error?.code === 'string' ? task.error.code : undefined,
+        });
+      }
       if (!['queued', 'pending', 'running', 'processing', 'submitted'].includes(task.status)) throw new Error(jobMessages.unknownTaskStatus);
       await progress('generating');
     }
@@ -1031,33 +1158,40 @@ export class OpenDesignAccount {
   private async submitImage(job: GenerationJob, parameters: Record<string, unknown>, references: NonNullable<ProviderContext['references']>, signal: AbortSignal,
     progress: (phase: string) => Promise<void>) {
     const profile = await this.profile();
-    if (!signedInProfile(profile)) throw new Error(requestMessages.unauthorized);
+    if (!signedInProfile(profile)) throw withErrorMeta(new Error(requestMessages.unauthorized), { errorSource: 'local' });
     const fetcher = this.options.fetcher ?? fetch, api = productionApi + '/api/v1/media';
     const headers = { Authorization: `Bearer ${profile!.controlKey}`, 'Content-Type': 'application/json' };
     const images = await uploadInputs(fetcher, api, headers, job.id, { references, progress, signal }).catch(error => {
-      const status = (error as { status?: number }).status;
-      if (status === 401 || status === 403) throw new Error(requestMessages.unauthorized);
-      if (status === 413) throw new Error(requestMessages.asset_too_large);
-      throw error instanceof ProviderError ? new Error(jobMessages.service) : error;
+      // Only AMR API rejections (ProviderError) map to account messages; presigned storage PUT failures stay storage errors.
+      if (error instanceof ProviderError) {
+        if (error.status === 401 || error.status === 403) throw withErrorMeta(new Error(requestMessages.unauthorized), { status: error.status, upstreamCode: error.upstreamCode, errorSource: 'api' });
+        if (error.status === 413) throw withErrorMeta(new Error(requestMessages.asset_too_large), { status: error.status, upstreamCode: error.upstreamCode ?? 'asset_too_large', errorSource: 'api' });
+        throw withErrorMeta(new Error(jobMessages.service), { status: error.status, upstreamCode: error.upstreamCode, errorSource: 'api' });
+      }
+      throw error;
     });
+    await progress('submitting');
     let response: Response;
     try {
       response = await fetcher(api + (images.length ? '/images/edits' : '/images/generations'), {
         method: 'POST', headers: { ...headers, ...mediaSubmitHeaders(productionApi, job.id) }, redirect: 'error', signal,
         body: JSON.stringify({ ...cloudImageParameters(parameters), model: job.model.modelId, prompt: job.prompt, ...(images.length ? { images } : {}) }),
       });
-    } catch (error) { if (signal.aborted) throw error; throw new Error(jobMessages.connection); }
+    } catch (error) { if (signal.aborted) throw error; throw new Error(jobMessages.connection, { cause: error }); }
     // Only the service error code is kept; the response text can echo the prompt.
-    const body = await response.json().catch(() => undefined) as { task_id?: unknown; error?: { code?: unknown }; code?: unknown } | undefined;
+    const body = await response.json().catch(() => undefined) as { task_id?: unknown; error?: string | { code?: unknown }; code?: unknown } | undefined;
     if (!response.ok) {
-      const code = String(body?.error?.code ?? body?.code ?? '');
-      throw new Error((Object.hasOwn(requestMessages, code) ? requestMessages[code] : undefined) ?? (response.status === 401 ? requestMessages.unauthorized : jobMessages.service));
+      const code = typeof body?.error === 'string' ? body.error : String(body?.error?.code ?? body?.code ?? '');
+      throw withErrorMeta(
+        new Error((Object.hasOwn(requestMessages, code) ? requestMessages[code] : undefined) ?? (response.status === 401 ? requestMessages.unauthorized : response.status === 429 ? requestMessages.tier_limit_exceeded : jobMessages.service)),
+        { status: response.status, upstreamCode: code || undefined, errorSource: 'api' },
+      );
     }
     return body ?? {};
   }
   private async submitSoundEffect(job: GenerationJob, parameters: Record<string, unknown>, signal: AbortSignal) {
     const access = await this.controlAccess();
-    if (!access) throw new Error(requestMessages.unauthorized);
+    if (!access) throw withErrorMeta(new Error(requestMessages.unauthorized), { errorSource: 'local' });
     const fetcher = this.options.fetcher ?? fetch, api = access.baseUrl + '/api/v1/media';
     const headers = { Authorization: `Bearer ${access.key}`, 'Content-Type': 'application/json' };
     let response: Response;
@@ -1066,11 +1200,14 @@ export class OpenDesignAccount {
         method: 'POST', headers: { ...headers, ...mediaSubmitHeaders(access.baseUrl, job.id) }, redirect: 'error', signal,
         body: JSON.stringify({ model: job.model.modelId, parameters: { ...parameters, text: job.prompt } }),
       });
-    } catch (error) { if (signal.aborted) throw error; throw new Error(jobMessages.connection); }
-    const body = await response.json().catch(() => undefined) as { task_id?: unknown; error?: { code?: unknown }; code?: unknown } | undefined;
+    } catch (error) { if (signal.aborted) throw error; throw new Error(jobMessages.connection, { cause: error }); }
+    const body = await response.json().catch(() => undefined) as { task_id?: unknown; error?: string | { code?: unknown }; code?: unknown } | undefined;
     if (!response.ok) {
-      const code = String(body?.error?.code ?? body?.code ?? '');
-      throw new Error((Object.hasOwn(requestMessages, code) ? requestMessages[code] : undefined) ?? (response.status === 401 ? requestMessages.unauthorized : jobMessages.service));
+      const code = typeof body?.error === 'string' ? body.error : String(body?.error?.code ?? body?.code ?? '');
+      throw withErrorMeta(
+        new Error((Object.hasOwn(requestMessages, code) ? requestMessages[code] : undefined) ?? (response.status === 401 ? requestMessages.unauthorized : response.status === 429 ? requestMessages.tier_limit_exceeded : jobMessages.service)),
+        { status: response.status, upstreamCode: code || undefined, errorSource: 'api' },
+      );
     }
     return body ?? {};
   }
@@ -1079,7 +1216,7 @@ export class OpenDesignAccount {
     const read = async () => {
       if (job.providerOrigin !== await this.identity()) throw new Error(jobMessages.accountChangedAfterSubmit);
       const access = await this.controlAccess();
-      if (!access) throw new Error(jobMessages.resultUnauthorized);
+      if (!access) throw withErrorMeta(new Error(jobMessages.resultUnauthorized), { errorSource: 'local' });
       try {
         const task = await retryRead(() => apiJson(this.options.fetcher ?? fetch,
           `${access.baseUrl}/api/v1/media/audio/tasks/${encodeURIComponent(taskId)}`,
@@ -1088,8 +1225,10 @@ export class OpenDesignAccount {
         if (task.task_id !== taskId || task.model && task.model !== job.model.modelId) throw new Error(jobMessages.resultUnreadable);
         return task;
       } catch (error) {
-        if ((error as { status?: number }).status === 401) throw new Error(jobMessages.resultUnauthorized);
-        throw new Error(jobMessages.resultUnreadable);
+        const status = (error as { status?: number }).status;
+        const upstreamCode = (error as { upstreamCode?: string }).upstreamCode;
+        if (status === 401) throw withErrorMeta(new Error(jobMessages.resultUnauthorized, { cause: error }), { status, upstreamCode, errorSource: 'api' });
+        throw withErrorMeta(new Error(jobMessages.resultUnreadable, { cause: error }), { status, upstreamCode, errorSource: status !== undefined ? 'api' : undefined });
       }
     };
     const assetFrom = (task: any) => {
@@ -1102,7 +1241,12 @@ export class OpenDesignAccount {
     let completedTask: any;
     for (;;) {
       const task = await read();
-      if (['failed', 'cancelled', 'canceled'].includes(task.status)) { await progress('remote_failed'); throw new Error(jobMessages.taskFailed); }
+      if (['failed', 'cancelled', 'canceled'].includes(task.status)) {
+        await progress('remote_failed');
+        throw withErrorMeta(new Error(jobMessages.taskFailed), {
+          upstreamCode: typeof task.error?.code === 'string' ? task.error.code : undefined,
+        });
+      }
       if (task.status === 'succeeded') { completedTask = task; break; }
       if (!['queued', 'pending', 'running', 'processing', 'submitted'].includes(task.status)) throw new Error(jobMessages.unknownTaskStatus);
       await progress('generating'); await delay(this.options.pollMs ?? 2000, undefined, { signal });
@@ -1111,17 +1255,23 @@ export class OpenDesignAccount {
     if (typeof initialAsset.size === 'number' && Number.isSafeInteger(initialAsset.size) && initialAsset.size >= 24) {
       return resumableDownload(directory, async () => {
         const task = await read();
-        if (['failed', 'cancelled', 'canceled'].includes(task.status)) { await progress('remote_failed'); throw new Error(jobMessages.taskFailed); }
+        if (['failed', 'cancelled', 'canceled'].includes(task.status)) {
+          await progress('remote_failed');
+          throw withErrorMeta(new Error(jobMessages.taskFailed), {
+            upstreamCode: typeof task.error?.code === 'string' ? task.error.code : undefined,
+          });
+        }
         if (task.status !== 'succeeded') throw new Error(jobMessages.resultUnreadable);
         const resolved = assetFrom(task);
         if (typeof resolved.size !== 'number') throw new Error(jobMessages.resultUnreadable);
         return { ...resolved, size: resolved.size };
       }, signal, download => progress('downloading', undefined, download), this.options.download, 3, 'audio/');
     }
+    await progress('downloading');
     const transport = this.options.download ?? streamMedia;
     const response = await retryRead(async () => {
       const res = await transport(initialAsset.url, { signal });
-      if (!res.ok) throw new ProviderError('Audio download failed', res.status);
+      if (!res.ok) throw new ProviderError('Audio download failed', res.status, undefined, 'download');
       return res;
     }, signal, 3);
     const bytes = await readCappedBytes(response, MAX_MEDIA_BYTES);
@@ -1133,7 +1283,7 @@ export class OpenDesignAccount {
     const read = async () => {
       if (job.providerOrigin !== await this.identity()) throw new Error(jobMessages.accountChangedAfterSubmit);
       const profile = await this.profile();
-      if (!signedInProfile(profile)) throw new Error(jobMessages.resultUnauthorized);
+      if (!signedInProfile(profile)) throw withErrorMeta(new Error(jobMessages.resultUnauthorized), { errorSource: 'local' });
       try {
         const task = await retryRead(() => apiJson(this.options.fetcher ?? fetch,
           `${productionApi}/api/v1/media/images/tasks/${encodeURIComponent(taskId)}`,
@@ -1142,8 +1292,10 @@ export class OpenDesignAccount {
         if (task.task_id !== taskId || task.model && task.model !== job.model.modelId) throw new Error(jobMessages.resultUnreadable);
         return task;
       } catch (error) {
-        if ((error as { status?: number }).status === 401) throw new Error(jobMessages.resultUnauthorized);
-        throw new Error(jobMessages.resultUnreadable);
+        const status = (error as { status?: number }).status;
+        const upstreamCode = (error as { upstreamCode?: string }).upstreamCode;
+        if (status === 401) throw withErrorMeta(new Error(jobMessages.resultUnauthorized, { cause: error }), { status, upstreamCode, errorSource: 'api' });
+        throw withErrorMeta(new Error(jobMessages.resultUnreadable, { cause: error }), { status, upstreamCode, errorSource: status !== undefined ? 'api' : undefined });
       }
     };
     const assetFrom = (task: any) => {
@@ -1155,14 +1307,24 @@ export class OpenDesignAccount {
     };
     for (;;) {
       const task = await read();
-      if (['failed', 'cancelled', 'canceled'].includes(task.status)) { await progress('remote_failed'); throw new Error(jobMessages.taskFailed); }
+      if (['failed', 'cancelled', 'canceled'].includes(task.status)) {
+        await progress('remote_failed');
+        throw withErrorMeta(new Error(jobMessages.taskFailed), {
+          upstreamCode: typeof task.error?.code === 'string' ? task.error.code : undefined,
+        });
+      }
       if (task.status === 'succeeded') break;
       if (!['queued', 'pending', 'running', 'processing', 'submitted'].includes(task.status)) throw new Error(jobMessages.unknownTaskStatus);
       await progress('generating'); await delay(this.options.pollMs ?? 2000, undefined, { signal });
     }
     return resumableDownload(directory, async () => {
       const task = await read();
-      if (['failed', 'cancelled', 'canceled'].includes(task.status)) { await progress('remote_failed'); throw new Error(jobMessages.taskFailed); }
+      if (['failed', 'cancelled', 'canceled'].includes(task.status)) {
+        await progress('remote_failed');
+        throw withErrorMeta(new Error(jobMessages.taskFailed), {
+          upstreamCode: typeof task.error?.code === 'string' ? task.error.code : undefined,
+        });
+      }
       if (task.status !== 'succeeded') throw new Error(jobMessages.resultUnreadable);
       return assetFrom(task);
     }, signal, download => progress('downloading', undefined, download), this.options.download);

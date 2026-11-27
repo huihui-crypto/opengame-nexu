@@ -8,6 +8,7 @@ import { studioUsageEvents, audioEffects, audioPresets, audioParams, audioJobs, 
 import { studioUsageProperties } from '../tracking/studio-properties.ts';
 import { createPosthogSender } from '../tracking/node.ts';
 import { identifyHost, validHostContext, previewTrackingContext } from '../tracking/host.ts';
+import { localAgents } from '../shared/local-agents.ts';
 import { studioTrackingFixtures } from './studio-tracking-fixtures.ts';
 import { fixture } from './fixtures.ts';
 import { transport } from './http.ts';
@@ -117,6 +118,54 @@ test('host identity uses declared clients, preserves unknown and scopes all hand
   assert.equal(identifyHost(undefined, { CODEX_THREAD_ID: 'PRIVATE' }).host_agent_source, 'launch_environment');
   assert.equal(identifyHost({ name: 'codex', version: 'PRIVATE_VERSION' }).mcp_client_version, undefined);
   assert(!validHostContext({ ...identifyHost({ name: 'codex' }), raw_name: 'PRIVATE' }));
+  // Expanded agent aliases, whitespace normalization and openmotion-cli bridge attribution.
+  for (const [raw, expected] of [
+    ['antigravity-client', 'antigravity'],
+    ['hermes-agent', 'hermes'],
+    ['qoder-desktop-mcp-host', 'qoder'],
+    ['qoderclicn', 'qoder'],
+    ['trae', 'trae'],
+    ['vscode-agent-host', 'copilot'],
+    ['Claude Desktop', 'claude'],
+    ['workbuddy-direct', 'workbuddy'],
+    ['cursor-agent', 'cursor'],
+  ] as const) {
+    const resolved = identifyHost({ name: raw, version: '1.0.0' });
+    assert.equal(resolved.host_agent, expected, raw);
+    assert.equal(resolved.host_agent_source, 'mcp_client_info', raw);
+    assert(validHostContext(resolved), raw);
+  }
+  assert.deepEqual(identifyHost({ name: 'Cherry Studio', version: '1.2.0' }), {
+    host_agent: 'other', host_agent_source: 'mcp_client_info', mcp_client_name: 'cherry-studio', mcp_client_version: '1.2.0',
+  });
+  assert.deepEqual(identifyHost({ name: 'openmotion-cli', version: '1' }, { OPENMOTION_HOST_AGENT: 'workbuddy' }), {
+    host_agent: 'workbuddy', host_agent_source: 'launch_environment', mcp_client_name: 'openmotion-cli', mcp_client_version: '1',
+  });
+  assert.deepEqual(identifyHost({ name: 'openmotion-cli', version: '1' }, { OPENMOTION_HOST_AGENT: 'cursor-agent' }), {
+    host_agent: 'cursor', host_agent_source: 'launch_environment', mcp_client_name: 'openmotion-cli', mcp_client_version: '1',
+  });
+  assert.deepEqual(identifyHost({ name: 'openmotion-cli', version: '1' }, { CODEX_THREAD_ID: 'PRIVATE' }), {
+    host_agent: 'codex', host_agent_source: 'launch_environment', mcp_client_name: 'openmotion-cli', mcp_client_version: '1',
+  });
+  assert.deepEqual(identifyHost({ name: 'openmotion-cli', version: '1' }, {}), {
+    host_agent: 'other', host_agent_source: 'mcp_client_info', mcp_client_name: 'openmotion-cli', mcp_client_version: '1',
+  });
+  assert.deepEqual(identifyHost({ name: 'openmotion-cli', version: '1' }, { OPENMOTION_HOST_AGENT: 'custom-unlisted-agent' }), {
+    host_agent: 'other', host_agent_source: 'mcp_client_info', mcp_client_name: 'openmotion-cli', mcp_client_version: '1',
+  });
+  // Every supported local Agent id must resolve to a named bucket directly and across the openmotion-cli bridge.
+  for (const agent of localAgents) {
+    const direct = identifyHost({ name: agent.id, version: '1.0.0' });
+    assert.notEqual(direct.host_agent, 'other', agent.id);
+    assert.notEqual(direct.host_agent, 'unknown', agent.id);
+    assert.equal(direct.host_agent_source, 'mcp_client_info', agent.id);
+    assert(validHostContext(direct), agent.id);
+    const bridged = identifyHost({ name: 'openmotion-cli', version: '1' }, { OPENMOTION_HOST_AGENT: agent.id });
+    assert.equal(bridged.host_agent, direct.host_agent, agent.id);
+    assert.equal(bridged.host_agent_source, 'launch_environment', agent.id);
+    assert.equal(bridged.mcp_client_name, 'openmotion-cli', agent.id);
+    assert(validHostContext(bridged), agent.id);
+  }
   const url = 'http://localhost:4173/?templates=1&embed=1', token = crypto.randomUUID();
   const value = previewTrackingContext({ previewUrl: url, sessionUrl: url, embeddedPreviewUrl: url, previewHandoff: { previewUrl: url,
     nextAction: { codex: { arguments: { target: { url } } } } }, requirements: { url } }, 'http://localhost:4173', token);

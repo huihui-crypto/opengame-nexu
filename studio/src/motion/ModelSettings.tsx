@@ -1,6 +1,7 @@
 import { IconButton } from 'open-design-ui/icon-button';
 import { Button } from 'open-design-ui/button';
 import * as tracking from './pageTracking';
+import { send } from './reporting';
 import { Tooltip } from "../components/ui/Tooltip";
 import { useEffect, useId, useRef, useState } from 'react';
 import { type DirectoryModel, type ProviderConnection, type ProviderDirectory } from '../../../shared/provider-directory';
@@ -190,7 +191,7 @@ function formatPlanLabel(plan?: string | null) {
  */
 function AccountProviderHeader({ provider, openAccount, showToast }: { provider: ProviderConnection; openAccount?: () => void; showToast: ReturnType<typeof useToast>['showToast'] }) {
   // Until the summary loads (or if it fails), the callout below still signs in here rather than leaving the page.
-  const { t } = useI18n(), { state: { account }, busy, action, subscription, refreshBilling } = useAccountSignIn('provider_detail', showToast, provider);
+  const { t } = useI18n(), { state: { account }, busy, action, subscription, refreshBilling, trackBrowserSignIn } = useAccountSignIn('provider_detail', showToast, provider);
   const [refreshing, setRefreshing] = useState(false);
   const entry = tracking.settingsEntryFrom();
   const plan = upgradePlan(account);
@@ -198,6 +199,19 @@ function AccountProviderHeader({ provider, openAccount, showToast }: { provider:
   const showUpgradeGuide = Boolean(plan && account);
   const showBillingRecovery = Boolean(!showStatusGuide && !showUpgradeGuide && account?.state === 'signed-in' && (account.billingUnavailable || entry === 'agent_media_balance_low'));
   const showSignInFallback = !showStatusGuide && !showUpgradeGuide && !showBillingRecovery && !provider.configured;
+  const gateKind = showBillingRecovery ? 'billing' : showSignInFallback ? 'signin' : null;
+  const gateReportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!gateKind) { gateReportedRef.current = null; return; }
+    if (gateReportedRef.current === gateKind) return;
+    gateReportedRef.current = gateKind;
+    send('surface_view', {
+      page_name: 'settings',
+      area: 'provider_detail',
+      element: 'gate_card',
+      hook_id: gateKind === 'billing' ? 'balance_gate_topup' : 'settings_signin',
+    });
+  }, [gateKind]);
   const advisoryReason = !showStatusGuide && !showUpgradeGuide && !showBillingRecovery && provider.configured && provider.reason && provider.reason !== 'Included with your account' ? provider.reason : undefined;
   const identity = account?.user?.email?.trim() || account?.user?.name?.trim();
   const planBadge = !showStatusGuide && !showUpgradeGuide && !showBillingRecovery && provider.configured ? formatPlanLabel(account?.plan) : undefined;
@@ -225,7 +239,7 @@ function AccountProviderHeader({ provider, openAccount, showToast }: { provider:
       </div>
       {provider.configured && openAccount && !showStatusGuide && !showUpgradeGuide && !showBillingRecovery && <Button variant="ghost" className="om-button h-auto" onClick={openAccount}>{t('Manage account')}<RemixIcon name="arrow-right-line" size={14} /></Button>}
     </header>
-    {showStatusGuide ? <AccountStatus account={account!} busy={busy} action={action} showToast={showToast} />
+    {showStatusGuide ? <AccountStatus account={account!} busy={busy} action={action} showToast={showToast} onOpenBrowserSignIn={trackBrowserSignIn} />
       : showUpgradeGuide ? <UpgradeGuide plan={plan!} subscription={subscription} />
       : showBillingRecovery ? <section className="om-card om-card-stack">
         <h2 className="om-subtitle">{t(billingUnavailable ? 'OpenDesign billing is unavailable' : 'OpenDesign balance is too low')}</h2>
@@ -303,7 +317,7 @@ function ProviderDetail({ provider, data, openAccount, showToast, onRemoved }: {
         {nonMediaProtocolNotice && <div className="om-provider-notice" role="note"><RemixIcon name="information-line" size={16} /><span>{t('This protocol currently syncs models and saves text defaults only; image, video and audio generation are not executed through it.')}</span></div>}
         {provider.custom && <TextField label={t('Provider name')} value={label} onChange={setLabel} error={validation.errors.label} required />}
         <label className="om-label">{t('API key')}<span className="om-field"><input type={visible ? 'text' : 'password'} aria-label={`${provider.label} API key`} aria-invalid={Boolean(validation.errors.apiKey) || undefined} aria-describedby={validation.errors.apiKey ? keyErrorId : undefined} autoComplete="off" spellCheck={false} value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={t(provider.configured ? 'Key saved · enter to replace' : 'Paste your API key')} /><Tooltip label={t(visible ? 'Hide API key' : 'Show API key')} wrap><IconButton variant="ghost" type="button" className="motion-icon-button" aria-label={t(visible ? 'Hide API key' : 'Show API key')} onClick={() => setVisible(value => !value)} icon={<RemixIcon name={visible ? 'eye-off-line' : 'eye-line'} size={16} />} /></Tooltip></span><small id={keyErrorId} className="om-field-error" role={validation.errors.apiKey ? 'alert' : undefined}>{validation.errors.apiKey ? t(validation.errors.apiKey) : null}</small></label>
-        <div className="om-settings-row"><span className="om-muted">{t(provider.credentialSource === 'environment' ? 'Using environment key' : 'Keys stay on this computer and are never returned by the API.')}</span>{provider.website && <a href={provider.website} target="_blank" rel="noreferrer" className="om-text-link">{t('Get API key')}<RemixIcon name="external-link-line" size={13} /></a>}</div>
+        <div className="om-settings-row"><span className="om-muted">{t(provider.credentialSource === 'environment' ? 'Using environment key' : 'Keys stay on this computer and are never returned by the API.')}</span>{provider.website && <a href={provider.website} target="_blank" rel="noreferrer" className="om-text-link" onClick={() => tracking.reportSettingsClick('provider_detail', 'get_api_key', { provider })}>{t('Get API key')}<RemixIcon name="external-link-line" size={13} /></a>}</div>
         {!fixedOrigin && <TextField label={t('API base URL')} value={baseUrl} onChange={setBaseUrl} error={validation.errors.baseUrl} type="url" required placeholder="https://api.example.com/v1" />}
         <div className="om-settings-row"><div className="om-settings-actions"><Button variant="ghost" className="om-button h-auto" data-primary disabled={busy || !apiKey.trim() && baseUrl === provider.baseUrl && label === provider.label}>{t(busy ? 'Saving…' : 'Save settings')}</Button>
           {provider.credentialSource === 'stored' && <Button variant="ghost" className="om-button h-auto" type="button" disabled={busy} onClick={() => void change(async () => { await gatewayRequest(`settings/providers/${provider.id}`, 'PUT', { apiKey: null }); setApiKey(''); }, 'Saved key removed')}>{t('Remove saved key')}</Button>}</div>

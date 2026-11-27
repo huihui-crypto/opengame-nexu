@@ -4,8 +4,9 @@
  * State lives in memory for the session; persisting it is a backend task.
  *
  * Only real work is reported as done: the OpenDesign link (webPublishClient) and packages built
- * in the browser. WeChat Mini Game is guided by the Agent via openmotion_game_wechat; all other
- * platforms advance instantaneously through local inline step controls and record completion locally.
+ * in the browser. The Agent guides WeChat Mini Game via openmotion_game_wechat and Douyin Mini
+ * Game via step handoffs to the game's existing conversation. Without a linked conversation, Douyin
+ * uses local inline step controls, as do the other platforms.
  */
 import { useSyncExternalStore } from 'react';
 import { buildPlatformZip, buildPlayable, gameSlug, loadGameHtml, type GamePackageResult, type GamePackageTarget } from './gamePackage';
@@ -14,6 +15,7 @@ import type { GamePublishDevToolId } from './devTools';
 import { gamePublishPlatform, storeLinkProblem, type GamePublishPlatform, type GamePublishPlatformId, type GamePublishStep } from './platforms';
 import { queueSuperAgentHandoff } from '../../motion/superAgentHandoff';
 import { wechatClient, type WechatPublishStatus } from './wechatClient';
+import { readLocale, translate } from '../../i18n/I18n';
 import wechatPortGuide from '../../../../skills/openmotion-game/references/wechat-minigame-port.md?raw';
 
 export type GamePublishView = 'list' | 'step' | 'result';
@@ -54,6 +56,8 @@ export interface GamePublishSession {
   view: GamePublishView;
   platformId?: GamePublishPlatformId;
   stepIndex: number;
+  /** When the Agent was asked to explain the current Douyin step. */
+  guideRequestedAt?: number;
   picked?: string;
   inputs: Record<string, string>;
   /** Why the current step cannot continue yet (English source key). */
@@ -141,8 +145,7 @@ function startWork(artifactId: string, work: GamePublishWorkKind, title: string,
   const session = sessions.get(artifactId)!;
   const id = pushEntry(session, { kind: 'agent', work, title, name, lines: [] });
   const edit = (change: (entry: Extract<GamePublishThreadEntry, { kind: 'agent' }>) => Extract<GamePublishThreadEntry, { kind: 'agent' }>) => {
-    const latest = sessions.get(artifactId);
-    if (latest) patchEntries(latest, entry => (entry.id === id && entry.kind === 'agent' ? change(entry) : entry));
+    patchEntries(session, entry => (entry.id === id && entry.kind === 'agent' ? change(entry) : entry));
   };
   return {
     line(text: string, vars?: Record<string, string | number>) { edit(entry => ({ ...entry, lines: [...entry.lines, { text, vars, done: true }] })); },
@@ -203,6 +206,41 @@ export function linkNote(session: GamePublishSession) {
   return `\n\nThe user kept OpenDesign selected. In your first message say only, in the user's language: ${line}. Never write the link or any URL to it, never say who published it or that you will not change it, and do not publish it yourself.`;
 }
 
+function say(key: string, vars?: Record<string, string | number>) {
+  return translate(readLocale(), key, vars);
+}
+
+function sendDouyinGuide(session: GamePublishSession, platform: GamePublishPlatform, index: number) {
+  if (platform.id !== 'douyin-minigame' || !session.chatId) return;
+  const step = platform.steps[index];
+  const instructions = step ? [
+    `Begin your reply with this exact heading: ${say('Step {current} of {total} · {name}', {
+      current: index + 1, total: platform.steps.length, name: say(step.title),
+    })}`,
+    say(step.why),
+    ...step.todo.map(item => say(item)),
+    ...(step.links ?? []).map(link => `${say(link.label)}: ${link.href}`),
+    `Tell the user to click “${say(step.cta)}” in the publish controls after completing this step.`,
+  ] : [
+    'Acknowledge the user confirmed submission for review. Explain that the review result is available in the Douyin developer console.',
+  ];
+  update(session.artifactId, { guideRequestedAt: Date.now() });
+  queueSuperAgentHandoff({
+    prompt: index === 0
+      ? say('Publish “{title}” to {name}', { title: session.gameTitle, name: say(platform.name) })
+      : say('Done: {title}', { title: say(platform.steps[index - 1].title) }),
+    hiddenInstructions: [
+      `Guide manual publishing of “${session.gameTitle}” (game ID ${session.gameId}) to ${say(platform.name)}.`,
+      ...instructions,
+      'Only discuss the current Douyin step. Do not report the OpenDesign play link status, call tools, edit files, upload anything, or claim a platform result you cannot verify.',
+    ].join('\n'),
+    mode: 'game',
+    newChat: false,
+    autoSend: true,
+    existingChatId: session.chatId,
+  });
+}
+
 /** Makes step `index` current, builds its package if it has one. */
 function enterStep(artifactId: string, platform: GamePublishPlatform, index: number) {
   update(artifactId, { stepIndex: index, view: 'step', stepProblem: undefined, status: WAITING });
@@ -212,13 +250,15 @@ function enterStep(artifactId: string, platform: GamePublishPlatform, index: num
 
 export interface GamePublishOpenInput { artifactId: string; chatId: string | null; gameId: string; gameTitle: string; orientation?: 'portrait' | 'landscape'; link?: GamePublishLinkTarget }
 
+export interface GamePublishChooseOptions { signedIn?: boolean; deferLink?: boolean }
+
 export const gamePublishActions = {
   open(input: GamePublishOpenInput) {
     const existing = sessions.get(input.artifactId);
     if (existing) {
       // A checkpoint result (steps still to go) stays; a final result goes back to the list.
       const view: GamePublishView = existing.view === 'result' && !stepInProgress(existing) ? 'list' : existing.view === 'list' && stepInProgress(existing) ? 'step' : existing.view;
-      update(input.artifactId, { open: true, view: existing.platformId === 'wechat' && view !== 'list' ? 'step' : view, chatId: input.chatId ?? existing.chatId, link: input.link ?? existing.link });
+      update(input.artifactId, { open: true, view: existing.platformId === 'wechat' && view !== 'list' ? 'step' : view, chatId: input.chatId, link: input.link ?? existing.link });
       if (existing.platformId === 'wechat' && existing.wechat) gamePublishActions.watchWechat(input.artifactId);
       return;
     }
@@ -303,7 +343,7 @@ export const gamePublishActions = {
       pushEntry(sessions.get(artifactId)!, { kind: 'link-failed', message: linkError.message, authRequired: linkError.authRequired });
     }
   },
-  choose(artifactId: string, platformId: GamePublishPlatformId, options?: { signedIn?: boolean; deferLink?: boolean }) {
+  choose(artifactId: string, platformId: GamePublishPlatformId, options?: GamePublishChooseOptions) {
     const session = sessions.get(artifactId);
     const platform = gamePublishPlatform(platformId);
     if (!session || !platform) return;
@@ -315,6 +355,7 @@ export const gamePublishActions = {
     update(artifactId, {
       platformId,
       stepIndex: 0,
+      guideRequestedAt: undefined,
       picked: undefined,
       inputs: {},
       view: 'step',
@@ -336,13 +377,12 @@ export const gamePublishActions = {
       gamePublishActions.startWechat(artifactId);
       return;
     }
-    // Non-WeChat platforms are driven instantaneously by local step controls and package builders,
-    // without queuing redundant Codex turns that stream out of order above the interactive cards.
     if (platform.devTool) {
       update(artifactId, { toolCheck: { toolId: platform.devTool, state: 'missing' } });
       return;
     }
     enterStep(artifactId, platform, 0);
+    sendDouyinGuide(latest, platform, 0);
   },
   /** The user says the developer tool is installed. OpenDesign does not check the machine yet. */
   confirmDevTool(artifactId: string) {
@@ -484,6 +524,7 @@ export const gamePublishActions = {
             : undefined;
     if (problem) { update(artifactId, { open: true, view: 'step', stepProblem: problem }); return; }
     const next = session.stepIndex + 1;
+    sendDouyinGuide(session, platform, next);
     if (next < platform.steps.length) {
       enterStep(artifactId, platform, next);
       return;

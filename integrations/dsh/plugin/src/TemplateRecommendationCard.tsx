@@ -10,10 +10,22 @@ type Props = {
   proposal: { callId?: string; details: RecommendationDetails };
   decision?: { phase?: string };
   summary?: React.ReactNode;
+  openGame: (url: string) => unknown;
   act: (verb: string, payload: { templateId: string }) => Promise<unknown>;
 };
 
-export function TemplateRecommendationCard({ proposal, decision, summary, act }: Props) {
+function gamePreviewUrl(template: RecommendedTemplate): string | undefined {
+  const value = template.playUrl || template.previewUrl;
+  try {
+    const href = studioAssetUrl(value);
+    if (!href) return;
+    const url = new URL(href);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return;
+    if (template.playUrl || /^\/(?:motion-)?api\/games\/[^/]+\/play(?:\/|\/[^/]+\.html?)?$/i.test(url.pathname)) return href;
+  } catch { /* Invalid links cannot be opened in the host browser. */ }
+}
+
+export function TemplateRecommendationCard({ proposal, decision, summary, act, openGame }: Props) {
   const theme = useHostTheme();
   const details = proposal.details;
   const language = resolveLanguage(details.language || "en");
@@ -37,8 +49,14 @@ export function TemplateRecommendationCard({ proposal, decision, summary, act }:
     if (video) void Promise.resolve(video.play()).catch(() => {});
     return () => { video?.pause(); modal.close(); };
   }, [preview]);
-  function enlarge(template: RecommendedTemplate) {
+  async function enlarge(template: RecommendedTemplate) {
     root.current?.querySelectorAll("video").forEach(video => video.pause());
+    const game = gamePreviewUrl(template);
+    if (game) {
+      try { await openGame(game); }
+      catch { feedback.current?.show(ui.failed); }
+      return;
+    }
     setPreviewFailed(false);
     setPreview(template);
   }
@@ -61,8 +79,8 @@ export function TemplateRecommendationCard({ proposal, decision, summary, act }:
       <div className="omd-recommendation-list">
         {details.templates.map(template => (
           <article className="omd-recommendation-item" key={template.id} data-template-id={template.id}>
-            <button type="button" className="omd-recommendation-cover" aria-label={`${ui.preview}: ${template.title}`} onClick={() => enlarge(template)}>
-              {template.previewUrl ? <video muted preload="none" playsInline poster={studioAssetUrl(template.posterUrl)} src={studioAssetUrl(template.previewUrl)} />
+            <button type="button" className="omd-recommendation-cover" aria-label={`${ui.preview}: ${template.title}`} onClick={() => void enlarge(template)}>
+              {template.previewUrl && !gamePreviewUrl(template) ? <video muted preload="none" playsInline poster={studioAssetUrl(template.posterUrl)} src={studioAssetUrl(template.previewUrl)} />
                 : template.posterUrl ? <img src={studioAssetUrl(template.posterUrl)} alt="" loading="lazy" /> : <span className="omd-recommendation-placeholder" />}
               <span className="omd-recommendation-preview-label">{ui.preview}</span>
             </button>

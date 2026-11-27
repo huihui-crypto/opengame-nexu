@@ -33,7 +33,7 @@ export function MultimodalUpgradeCard({ subscription, visit, title, details, but
   return <MultimodalOfferCard kind="upgrade" visit={visit} title={title ?? t('Unlock multimodal creation')} details={details ?? t('Black Friday’s lowest prices of the year! 7 days of unlimited use')}>
     <MultimodalUpgradeButton subscription={subscription} label={buttonLabel} visit={visit} model={model} onUpgrade={onUpgrade} />
     {manage && !subscription.link && <div className={styles.manage}>
-      <Button variant="plain" className={`om-text-link ${styles.manageButton}`} data-quiet onClick={() => void subscription.openSubscription('manage_subscription')}>{t('Manage subscription')}</Button>
+      <Button variant="plain" className={`om-text-link ${styles.manageButton}`} data-quiet onClick={() => void subscription.openSubscription('manage_subscription', visit && reportOfferClick(visit, 'upgrade', model, 'manage_subscription'))}>{t('Manage subscription')}</Button>
     </div>}
   </MultimodalOfferCard>;
 }

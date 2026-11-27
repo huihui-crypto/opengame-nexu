@@ -5,12 +5,15 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AccountSummary } from '../../../shared/provider-directory';
 import { I18nProvider, type Locale } from '../i18n/I18n';
 import { AccountSettings } from './AccountSettings';
+import { setPendingAttribution } from './entitlementAttribution';
 import { GITHUB_REPOSITORY } from './githubRepository';
 import { notifyProvidersChanged } from './useProviderDirectory';
+import { trackMotion } from './tracking';
 
 const hooks = vi.hoisted(() => ({ account: undefined as unknown, request: vi.fn() }));
 vi.mock('./gatewayClient', () => ({ gatewayRequest: hooks.request }));
 vi.mock('./useProviderDirectory', () => ({ notifyProvidersChanged: vi.fn() }));
+vi.mock('./tracking', () => ({ trackMotion: vi.fn(async () => 'queued') }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ''; vi.clearAllMocks(); });
@@ -255,4 +258,55 @@ it('offers Free and Go accounts an upgrade through the registered entry source, 
   }
   const paid = await open({ state: 'signed-in', user: { email: 'ada@example.test' }, plan: 'plus', balance: '12.00' }, 'en', 'subscription');
   expect(paid.querySelector('[data-guide="upgrade"]')).toBeNull();
+});
+
+it('forwards pending studio/modality and URL entry_from attribution across login, subscription, and checkout-return refresh', async () => {
+  const originalUrl = window.location.href;
+  try {
+    window.history.replaceState(null, '', '/settings/providers?provider=account&entry_from=agent_game_publish_signed_out');
+    const signInEntryId = '11111111-2222-4333-8444-555555555555';
+    setPendingAttribution('sign_in', 'studio_generate', signInEntryId, { studioId: 'design', modality: 'video' });
+    const page = await open({ state: 'signed-out' }, 'en', 'account');
+    await act(async () => button(page, 'Sign in now')!.click());
+    expect(hooks.request).toHaveBeenCalledWith('settings/account/login', 'POST', {
+      hookId: 'studio_generate',
+      entryId: signInEntryId,
+      studioId: 'design',
+      modality: 'video',
+      entryFrom: 'agent_game_publish_signed_out',
+    });
+
+    act(() => root!.unmount()); document.body.innerHTML = '';
+    vi.clearAllMocks();
+    window.history.replaceState(null, '', '/settings/providers?provider=account&entry_from=agent_media_upgrade_go');
+    const subEntryId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    setPendingAttribution('subscription', 'studio_free_gate', subEntryId, { studioId: 'assets', modality: 'audio' });
+    const subPage = await open({ state: 'signed-in', plan: 'go', balance: '0.00' }, 'en', 'subscription');
+    hooks.request.mockImplementation(async (route: string) => route === 'settings/account/subscription' ? { opened: true } : hooks.account);
+    hooks.request.mockClear();
+    await act(async () => button(subPage, 'Upgrade to Plus')!.click());
+    expect(hooks.request).toHaveBeenCalledWith('settings/account/subscription', 'POST', {
+      hookId: 'studio_free_gate',
+      entryId: subEntryId,
+      studioId: 'assets',
+      modality: 'audio',
+      entryFrom: 'agent_media_upgrade_go',
+    });
+
+    hooks.account = { state: 'signed-in', plan: 'plus', balance: '10.00', consoleUrl: 'https://open-design.ai/cloud' };
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    const refreshCall = vi.mocked(trackMotion).mock.calls.find(([event]) => event === 'entitlement_refresh_result');
+    expect(refreshCall?.[1]).toMatchObject({
+      page_name: 'settings',
+      hook_id: 'studio_free_gate',
+      entry_id: subEntryId,
+      outcome: 'success',
+      plan_changed: true,
+      studio_id: 'assets',
+      modality: 'audio',
+      entry_from: 'agent_media_upgrade_go',
+    });
+  } finally {
+    window.history.replaceState(null, '', originalUrl);
+  }
 });

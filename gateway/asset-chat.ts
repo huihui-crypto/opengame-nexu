@@ -237,7 +237,7 @@ export class AssetConversations {
             if (active.stopped) throw new Error('Conversation stopped');
             args.conversationId = active.chat.id; args.requestId = `chat-${assetHash({ conversation: active.chat.id, call: p.callId }).slice(0, 64)}`;
           }
-          value = await assetOperation(this.store, args);
+          value = await assetOperation(this.store, args, undefined, this.store.tracking, 'gui');
         } else throw new Error('Unknown asset tool');
       } catch (error) { success = false; value = { error: error instanceof Error ? error.message : 'Asset operation failed' }; }
       if (active.stopped) return;

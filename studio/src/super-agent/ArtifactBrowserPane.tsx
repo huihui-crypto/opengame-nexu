@@ -46,8 +46,10 @@ import {
   communityGames,
   coverUrl,
   gameApi,
+  isIsolatedGameFrame,
   playableUrl,
   rememberInstruction,
+  resolveGameFrameUrl,
   storedInstruction,
 } from '../motion/game/gameCatalog';
 import { isMultiplayerGameArtifact } from '../motion/game/gameSuperAgent';
@@ -63,7 +65,7 @@ import {
 } from './BrowserAnnotationOverlay';
 import { fileAttachmentIcon, resourceIcon } from './ResourcePickerDialog';
 import { GamePublishPanel } from './gamePublish/GamePublishPanel';
-import { gamePublishActions, useGamePublishSession } from './gamePublish/gamePublishStore';
+import { gamePublishActions, useGamePublishSession, type GamePublishChooseOptions } from './gamePublish/gamePublishStore';
 import {
   captureSuperAgentPreviewSnapshot,
   readSuperAgentFileContent,
@@ -414,11 +416,12 @@ function ProjectPreviewCodeView({
   const hasFrameSource = mode === 'preview' && Boolean(previewUrl || srcDoc);
   const localIframeRef = useRef<HTMLIFrameElement | null>(null);
   const effectiveIframeRef = iframeRef ?? localIframeRef;
-  const sourceReady = useDeferredIframeSource(effectiveIframeRef, frameKey, hasFrameSource);
+  const iframeKey = `${frameKey}\0${sandbox}`;
+  const sourceReady = useDeferredIframeSource(effectiveIframeRef, iframeKey, hasFrameSource);
   const [startup, setStartup] = useState<{ frame: string; state: 'loading' | 'ready' | 'failed' } | null>(null);
   const startupState = startup?.frame === frameIdentity ? startup.state : undefined;
   useEffect(() => {
-    if (!hasFrameSource || !previewUrl.startsWith('/motion-api/games/')) return;
+    if (!hasFrameSource || (!previewUrl.startsWith('/motion-api/games/') && !isIsolatedGameFrame(previewUrl))) return;
     const onStartup = (event: MessageEvent) => {
       if (!effectiveIframeRef.current || event.source !== effectiveIframeRef.current.contentWindow || event.data?.type !== 'opengame:startup') return;
       const state = event.data.state;
@@ -669,7 +672,7 @@ function ProjectPreviewCodeView({
         )}
         <iframe
           ref={effectiveIframeRef}
-          key={frameKey}
+          key={iframeKey}
           title={title}
           {...(sourceReady ? (srcDoc ? { srcDoc } : { src: previewUrl }) : {})}
           sandbox={sandbox}
@@ -1141,7 +1144,7 @@ function GameProjectArtifactView({
   const isExternalGame = !projectId && Boolean(artifact.url && /^https?:\/\//i.test(artifact.url));
   const nonEmbeddableExternal = Boolean(communityMatch?.external && !communityMatch.external.embeddable);
 
-  const previewUrl = useMemo(() => {
+  const defaultPreviewUrl = useMemo(() => {
     if (bundledBlobUrl) return bundledBlobUrl;
     if (projectId) {
       const presentedParam = artifact.presentedAt ? `&p=${artifact.presentedAt}` : '';
@@ -1149,6 +1152,18 @@ function GameProjectArtifactView({
     }
     return artifact.url || '';
   }, [bundledBlobUrl, projectId, artifact.url, artifact.revision, artifact.presentedAt, reloadKey]);
+  const [isolatedPreview, setIsolatedPreview] = useState<{ original: string; url: string }>();
+  const resolveTrialPreview = Boolean(projectId && !bundledBlobUrl && !isDraftOrFailed && !isBuilding && !isMultiplayer && isTrial);
+  useEffect(() => {
+    if (!resolveTrialPreview) return;
+    let live = true;
+    void resolveGameFrameUrl(projectId, defaultPreviewUrl).then(url => {
+      if (live) setIsolatedPreview({ original: defaultPreviewUrl, url });
+    });
+    return () => { live = false; };
+  }, [projectId, defaultPreviewUrl, resolveTrialPreview]);
+  const awaitingTrialPreview = resolveTrialPreview && isolatedPreview?.original !== defaultPreviewUrl;
+  const previewUrl = isolatedPreview?.original === defaultPreviewUrl ? isolatedPreview.url : defaultPreviewUrl;
 
   const effectiveMode: 'preview' | 'code' = !isTrial && projectId && mode === 'code' ? 'code' : 'preview';
   const canUsePreviewBridge = !isTrial && Boolean(projectId) && !bundledBlobUrl;
@@ -1310,11 +1325,11 @@ function GameProjectArtifactView({
     <ProjectPreviewCodeView
       frameKey={frameKey}
       title={artifact.title}
-      previewUrl={canUsePreviewBridge ? (bridge.bridgedPreviewUrl || previewUrl) : previewUrl}
+      previewUrl={awaitingTrialPreview ? '' : canUsePreviewBridge ? (bridge.bridgedPreviewUrl || previewUrl) : previewUrl}
       sandbox={
         isExternalGame
           ? 'allow-scripts allow-same-origin allow-pointer-lock allow-popups'
-          : 'allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals'
+          : `allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals${isIsolatedGameFrame(previewUrl) ? ' allow-same-origin' : ''}`
       }
       allow="fullscreen; gamepad; autoplay; clipboard-write"
       mode={effectiveMode}
@@ -1861,6 +1876,7 @@ export function ArtifactBrowserPane({
   onClosePane,
   onAttachArtifact,
   onUseGameInAgent,
+  onChooseDouyin,
   pendingDeployArtifactId,
   onConsumeDeployRequest,
   pendingCodeFile,
@@ -1894,6 +1910,7 @@ export function ArtifactBrowserPane({
   onClosePane: () => void;
   onAttachArtifact: (artifact: SuperAgentArtifact) => void;
   onUseGameInAgent?: (artifact: SuperAgentArtifact) => void;
+  onChooseDouyin?: (artifactId: string, options: GamePublishChooseOptions) => void;
   pendingDeployArtifactId?: string | null;
   onConsumeDeployRequest?: () => void;
   pendingCodeFile?: { artifactId: string; filePath: string; seq: number } | null;
@@ -3721,6 +3738,7 @@ export function ArtifactBrowserPane({
           <GamePublishPanel
             artifactId={activeArtifact.id}
             coverUrl={`/motion-api/games/${encodeURIComponent(publishGameId)}/play/assets/cover.png`}
+            onChooseDouyin={onChooseDouyin}
             onNotify={onNotify}
           />
         )}

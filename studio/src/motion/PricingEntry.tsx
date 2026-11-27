@@ -13,7 +13,7 @@ export function PricingEntry({ trackingPage }: { trackingPage: CreativePage }) {
   // Each click is its own Pricing entry: its id is on the link and on the click event, then replaced.
   const [entryId, setEntryId] = useState(newCampaignEntryId);
   const markCheckoutReturn = useCheckoutReturnRefresh(trackingPage, 'header_pricing');
-  const href = campaignPricingUrl(locale, 'openmotion_header_pricing', entryId);
+  const href = campaignPricingUrl(locale, 'openmotion_header_pricing', entryId, { studioId: 'header', modality: 'all' });
   // Outside the campaign window the entry stays as plain Pricing: no badge, campaign label or campaign fields.
   const campaign = useBlackFridayActive();
   // Signed in (any plan) the entry reads Upgrade; signed out, or while the account loads, it reads Pricing.
@@ -27,7 +27,7 @@ export function PricingEntry({ trackingPage }: { trackingPage: CreativePage }) {
     void trackMotion('ui_click', { page_name: trackingPage, area: 'header', element: 'open_pricing', ...(campaign ? { campaign_id: BLACK_FRIDAY_CAMPAIGN } : {}), hook_id: 'header_pricing', entry_id: clickedEntryId,
       interaction_method: event.detail === 0 ? 'keyboard' : 'pointer' });
     // Stamp the click time on the address the browser is about to open, then replace the id for the next click.
-    event.currentTarget.href = campaignPricingUrl(locale, 'openmotion_header_pricing', clickedEntryId);
+    event.currentTarget.href = campaignPricingUrl(locale, 'openmotion_header_pricing', clickedEntryId, { studioId: 'header', modality: 'all' });
     window.setTimeout(() => setEntryId(newCampaignEntryId()), 0);
   }
 

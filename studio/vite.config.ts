@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { resolveDesignSystemFile } from '../packages/design-system/index.js';
+import { resolveNodeProductId } from '../shared/product-identity.ts';
 import { openmotionI18nPlugin } from './vite-i18n-plugin';
 
 const local = (file: string) => fileURLToPath(new URL(file, import.meta.url));
@@ -75,7 +76,11 @@ export default defineConfig({
       });
     },
   }],
-  define: { __STUDIO_VERSION__: JSON.stringify('0.9.7'), ...(!process.env.VITEST ? { 'import.meta.env.VITE_HYPERFRAMES_NO_TELEMETRY': JSON.stringify('1') } : {}) },
+  define: {
+    __STUDIO_VERSION__: JSON.stringify('0.9.7'),
+    __OM_BUILD_PRODUCT__: JSON.stringify(resolveNodeProductId()),
+    ...(!process.env.VITEST ? { 'import.meta.env.VITE_HYPERFRAMES_NO_TELEMETRY': JSON.stringify('1') } : {}),
+  },
   resolve: { alias: [
     { find: 'open-design-ui', replacement: local('../packages/open-design-ui') },
     { find: 'canvas', replacement: local('./src/shims/canvasBrowserStub.js') },

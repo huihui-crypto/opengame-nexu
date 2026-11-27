@@ -37,10 +37,10 @@ it('starts the OpenDesign sign-in in one click and stays on the current page', a
   const openAccount = render({ state: 'signed-out' });
   expect(button().textContent).toBe('开始使用');
   await act(async () => { button().click(); });
-  expect(gatewayRequest).toHaveBeenCalledWith('settings/account/login', 'POST', {});
-  expect(openAccount).not.toHaveBeenCalled();
   const click = vi.mocked(trackMotion).mock.calls.find(([event]) => event === 'ui_click')![1] as Record<string, unknown>;
-  expect(click).toMatchObject({ page_name: 'explore', area: 'header', element: 'start_sign_in' });
+  expect(click).toMatchObject({ page_name: 'explore', area: 'header', element: 'start_sign_in', hook_id: 'header_signin', entry_id: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+  expect(gatewayRequest).toHaveBeenCalledWith('settings/account/login', 'POST', { hookId: 'header_signin', entryId: click.entry_id });
+  expect(openAccount).not.toHaveBeenCalled();
   expect(validProperties(studioEvents, 'ui_click', click)).toBe(true);
 });
 
@@ -59,6 +59,9 @@ it('reopens the browser sign-in page instead of starting a second sign-in while 
   expect(gatewayRequest).not.toHaveBeenCalled();
   expect(open).toHaveBeenCalledWith('https://open-design.ai/cloud/cli/activate?code=ABCD', '_blank', 'noopener,noreferrer');
   expect(openAccount).not.toHaveBeenCalled();
+  const click = vi.mocked(trackMotion).mock.calls.find(([event]) => event === 'ui_click')![1] as Record<string, unknown>;
+  expect(click).toMatchObject({ page_name: 'explore', area: 'header', element: 'open_browser_signin', hook_id: 'header_signin' });
+  expect(validProperties(studioEvents, 'ui_click', click)).toBe(true);
   open.mockRestore();
 });
 

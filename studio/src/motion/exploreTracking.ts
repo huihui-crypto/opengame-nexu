@@ -30,8 +30,23 @@ function targetFields(target: CreativeTarget) {
   };
 }
 
-export function reportCreativeClick(page: CreativePage, area: CreativeArea, element: Click['element'], target: CreativeTarget = {}) {
-  send('ui_click', { page_name: page, area, element, ...targetFields(target) });
+export function reportCreativeClick(
+  page: CreativePage,
+  area: CreativeArea,
+  element: Click['element'],
+  target: CreativeTarget = {},
+  attribution?: { hookId?: Click['hook_id']; entryId?: string; hook_id?: Click['hook_id']; entry_id?: string },
+) {
+  const hookId = attribution?.hook_id ?? attribution?.hookId;
+  const entryId = attribution?.entry_id ?? attribution?.entryId;
+  send('ui_click', {
+    page_name: page,
+    area,
+    element,
+    ...targetFields(target),
+    ...(hookId ? { hook_id: hookId } : {}),
+    ...(entryId ? { entry_id: entryId } : {}),
+  });
 }
 
 type ViewPage = Extract<CreativePage, 'explore' | 'creative_studio' | 'model_overview'>;
@@ -48,12 +63,12 @@ export function reportCreativePageView(page: ViewPage, hasProject: boolean, targ
 type HubArea = Extract<Click['area'], `hub_${string}`>;
 /** A model hub click. Video titles, creators and search text never become fields; a scene filter is sent as a stable id. */
 export function reportHubClick(hub: string, area: HubArea, element: Click['element'],
-  fields: { video?: string; position?: number; model?: string; signedIn?: boolean; filter?: string; action?: Click['template_action']; hookId?: Click['hook_id']; entryId?: string } = {}) {
-  const { video, position, model, signedIn, filter, action, hookId, entryId } = fields;
+  fields: { video?: string; position?: number; model?: string; signedIn?: boolean; filter?: string; action?: Click['template_action']; hookId?: Click['hook_id']; entryId?: string; campaignId?: Click['campaign_id'] } = {}) {
+  const { video, position, model, signedIn, filter, action, hookId, entryId, campaignId } = fields;
   const filterId = filter === undefined ? {} : optionId(filter);
   send('ui_click', { page_name: 'model_hub', area, element, ...slugField('hub_id', hub), ...slugField('hub_video_id', video), ...modelFields(model),
     ...(position === undefined ? {} : { position }), ...(signedIn === undefined ? {} : { signed_in: signedIn }), ...filterId, ...(action ? { template_action: action } : {}),
-    ...(hookId ? { hook_id: hookId } : {}), ...(entryId ? { entry_id: entryId } : {}) });
+    ...(hookId ? { hook_id: hookId } : {}), ...(entryId ? { entry_id: entryId } : {}), ...(campaignId ? { campaign_id: campaignId } : {}) });
 }
 export function reportHubPageView(hub: string, hasProject: boolean, signedIn: boolean) {
   send('page_view', { page_name: 'model_hub', view_id: newTrackingId(), embedded: embeddedView(), has_project: hasProject, ...slugField('hub_id', hub), signed_in: signedIn });

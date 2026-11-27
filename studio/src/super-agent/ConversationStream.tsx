@@ -107,6 +107,7 @@ import {
   type MediaPromptExtra,
   type ModeComposerOptions,
 } from './ModeComposerControls';
+import { CreationHome } from './CreationHome';
 import { GamePublishThread } from './gamePublish/GamePublishThread';
 import { gamePublishActions, useGamePublishThread } from './gamePublish/gamePublishStore';
 
@@ -149,42 +150,6 @@ export function resolveCreationModeEntry(
   }
   return { modeId: mode };
 }
-
-const PRIMARY_STARTERS: {
-  key?: string;
-  id: SuperAgentCreationModeId;
-  designModule?: SuperAgentDesignModuleId;
-  optionsPatch?: Partial<ModeComposerOptions>;
-  tone: 'coding' | 'agent' | 'image' | 'video' | 'audio';
-  icon: string;
-  title: string;
-  featured?: boolean;
-  badge?: string;
-}[] = [
-  { id: 'game', tone: 'agent', icon: 'gamepad-line', title: 'Build a game', featured: true, badge: 'New' },
-  { key: 'design', id: 'design', tone: 'image', icon: 'palette-line', title: 'Design Studio', badge: 'New' },
-  { key: 'motion-graphics', id: 'motion', optionsPatch: { motionEngine: 'motion' }, tone: 'video', icon: 'movie-line', title: 'Motion graphics' },
-  { key: 'video', id: 'motion', optionsPatch: { motionEngine: 'video-model' }, tone: 'video', icon: 'clapperboard-line', title: 'Make a video' },
-  { key: 'deck', id: 'design', designModule: 'deck', tone: 'audio', icon: 'slideshow-line', title: 'Create slides' },
-];
-
-const EXTRA_STARTERS: {
-  key: string;
-  id: SuperAgentCreationModeId;
-  designModule?: SuperAgentDesignModuleId;
-  optionsPatch?: Partial<ModeComposerOptions>;
-  tone: 'coding' | 'agent' | 'image' | 'video' | 'audio';
-  icon: string;
-  title: string;
-}[] = [
-  { key: 'research', id: 'research', tone: 'agent', icon: 'book-open-line', title: 'Research a topic' },
-  { key: 'visualization', id: 'visualization', tone: 'coding', icon: 'bar-chart-box-line', title: 'Visualization' },
-  { key: 'document', id: 'design', designModule: 'document', tone: 'image', icon: 'file-text-line', title: 'Document' },
-  { key: 'image', id: 'design', designModule: 'image', tone: 'image', icon: 'image-line', title: 'Generate image' },
-  { key: 'website', id: 'design', designModule: 'prototype', tone: 'image', icon: 'layout-line', title: 'Build a website' },
-  { key: 'audio', id: 'audio', tone: 'audio', icon: 'music-2-line', title: 'Create audio' },
-  { key: 'coding', id: 'coding', tone: 'coding', icon: 'code-s-slash-line', title: 'Coding' },
-];
 
 const COMPOSER_MODES = (['game', 'design', 'motion', 'research', 'visualization', 'audio', 'media', 'coding'] satisfies SuperAgentCreationModeId[])
   .map(findSuperAgentMode)
@@ -257,6 +222,7 @@ async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<F
 export function ConversationStream({
   active = true,
   chat,
+  homeVisit = 0,
   conversations = [],
   activeArtifacts = [],
   requestedMode = null,
@@ -326,6 +292,7 @@ export function ConversationStream({
   conversations?: SuperAgentChatSummary[];
   activeArtifacts?: SuperAgentArtifact[];
   requestedMode?: SuperAgentCreationModeId | null;
+  homeVisit?: number;
   requestedDesignModule?: SuperAgentDesignModuleId | null;
   playingGameId?: string | null;
   loading: boolean;
@@ -440,7 +407,6 @@ export function ConversationStream({
   attachmentsRef.current = attachments;
   const prevInlineKeysRef = useRef<Set<string>>(new Set());
   const prevChatIdRef = useRef<string | undefined>(chat?.id);
-  const [moreStartersOpen, setMoreStartersOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [approvalMenuOpen, setApprovalMenuOpen] = useState(false);
   const [browsingEngine, setBrowsingEngine] = useState<SuperAgentEngine>(selection.engine);
@@ -449,6 +415,7 @@ export function ConversationStream({
   const initialResolvedMode = resolveCreationModeEntry(requestedMode, requestedDesignModule);
   const [activeModeId, setActiveModeId] = useState<SuperAgentCreationModeId | null>(() => initialResolvedMode.modeId);
   const previousRequestedMode = useRef(requestedMode);
+  const previousHomeVisit = useRef(homeVisit);
   const [modeOptions, setModeOptions] = useState<ModeComposerOptions>(() => ({
     ...DEFAULT_MODE_COMPOSER_OPTIONS,
     ...initialResolvedMode.optionsPatch,
@@ -558,7 +525,6 @@ export function ConversationStream({
   useEffect(() => {
     if (!active) {
       setMentionMenuOpen(false);
-      setMoreStartersOpen(false);
       setModelMenuOpen(false);
       setApprovalMenuOpen(false);
       setPreviewingChipKey(null);
@@ -761,13 +727,18 @@ export function ConversationStream({
   }, [modelMenuOpen, activeRuntime?.id, activeRuntime?.kind, activeRuntime?.status, browsingChoice?.id, browsingChoice?.agent]);
 
   useEffect(() => {
-    if (requestedMode && !chat?.messages.length) {
+    if (homeVisit !== previousHomeVisit.current) {
+      // A starter card can change the mode without changing the home URL.
+      setActiveModeId(null);
+      setModeOptions(prev => (prev.gameTemplate ? { ...prev, gameTemplate: null } : prev));
+    } else if (requestedMode && !chat?.messages.length) {
       enterMode(requestedMode, requestedDesignModule);
     } else if (!requestedMode && previousRequestedMode.current && !chat?.id && !draftSeed?.mode) {
       setActiveModeId(null);
     }
+    previousHomeVisit.current = homeVisit;
     previousRequestedMode.current = requestedMode;
-  }, [requestedMode, requestedDesignModule, chat?.id, chat?.messages.length, draftSeed?.mode, enterMode]);
+  }, [homeVisit, requestedMode, requestedDesignModule, chat?.id, chat?.messages.length, draftSeed?.mode, enterMode]);
 
   useEffect(() => {
     const prevId = prevChatIdRef.current;
@@ -1869,81 +1840,13 @@ export function ConversationStream({
               onClose={exitActiveMode}
             />
           ) : (
-          <div className="om-sa-home">
-            <div className="om-sa-home-hero">
-              <h2>{t('What can I create for you?')}</h2>
-            </div>
-
-            <div className="om-sa-starter-grid">
-              {PRIMARY_STARTERS.map(card => (
-                <Button
-                  key={card.key ?? card.id}
-                  variant="plain"
-                  type="button"
-                  className="om-sa-starter-card"
-                  data-tone={card.tone}
-                  onClick={() => {
-                    enterMode(card.id, card.designModule, card.optionsPatch);
-                    composerRef.current?.focus();
-                  }}
-                >
-                  <span className="om-sa-starter-head">
-                    <span className="om-sa-starter-icon" data-tone={card.tone} aria-hidden="true">
-                      <RemixIcon name={card.icon} size={20} />
-                    </span>
-                    {card.badge && (
-                      <span className="om-badge" data-nav-badge={card.badge} lang="en">{card.badge}</span>
-                    )}
-                  </span>
-                  <strong>{t(card.title)}</strong>
-                </Button>
-              ))}
-
-              <Popover
-                open={moreStartersOpen}
-                onOpenChange={setMoreStartersOpen}
-                side="bottom"
-                align="end"
-                initialFocus={false}
-                aria-label={t('Explore more')}
-                className="om-agent-settings-popover om-sa-more-popover"
-                trigger={
-                  <Button
-                    variant="plain"
-                    type="button"
-                    className="om-sa-starter-card om-sa-starter-card-more"
-                    data-active={moreStartersOpen || undefined}
-                  >
-                    <span className="om-sa-starter-icon" aria-hidden="true">
-                      <RemixIcon name="more-fill" size={20} />
-                    </span>
-                    <strong>{t('Explore more')}</strong>
-                  </Button>
-                }
-              >
-                <div className="om-sa-more-menu">
-                  {EXTRA_STARTERS.map(card => (
-                    <Button
-                      key={card.key}
-                      variant="plain"
-                      type="button"
-                      className="om-sa-more-item"
-                      onClick={() => {
-                        setMoreStartersOpen(false);
-                        enterMode(card.id, card.designModule, card.optionsPatch);
-                        composerRef.current?.focus();
-                      }}
-                    >
-                      <span className="om-sa-starter-icon" data-tone={card.tone} aria-hidden="true">
-                        <RemixIcon name={card.icon} size={16} />
-                      </span>
-                      <span>{t(card.title)}</span>
-                    </Button>
-                  ))}
-                </div>
-              </Popover>
-            </div>
-          </div>
+            <CreationHome
+              active={active}
+              onEnterMode={(mode, designModule, options) => {
+                enterMode(mode, designModule, options);
+                focusEditor();
+              }}
+            />
           )
         ) : (
           <>
@@ -1978,6 +1881,7 @@ export function ConversationStream({
           )}
           <GamePublishThread
             chatId={chat?.id}
+            messages={displayChat?.messages}
             onOpenPanel={artifactId => {
               onOpenArtifactId(artifactId);
               gamePublishActions.reopen(artifactId);

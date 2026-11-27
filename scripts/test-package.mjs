@@ -9,6 +9,7 @@ import { prepareVisionAssets } from './vision-runtime.mjs';
 import { releaseProfile } from '../shared/mcp-registry.ts';
 import { distributionFiles, requireDownloadedMedia } from './distribution.ts';
 import { packageTemplateConfig } from '../shared/template-config.ts';
+import { resolveNodeProductId } from '../shared/product-identity.ts';
 import { checkReleaseVersion, testVersion } from './release-version.mjs';
 export { checkReleaseVersion, testVersion } from './release-version.mjs';
 
@@ -84,6 +85,8 @@ export async function build(target, version, profile = releaseProfile, templateE
   }
   await writeFile(path.join(stage, 'shared/mcp-release.json'), JSON.stringify({ profile }, null, 2) + '\n');
   await writeFile(path.join(stage, 'shared/template-config.json'), JSON.stringify(templateConfig, null, 2) + '\n');
+  const existingBuildInfo = JSON.parse(await readFile(path.join(stage, 'shared/build-info.json'), 'utf8').catch(() => '{}'));
+  await writeFile(path.join(stage, 'shared/build-info.json'), JSON.stringify({ ...existingBuildInfo, product: resolveNodeProductId() }, null, 2) + '\n');
   await cp(runtime, path.join(stage, 'runtime'), { recursive: true, verbatimSymlinks: true });
   for (const file of ['package.json', 'package-lock.json', '.codex-plugin/plugin.json']) {
     const filename = path.join(stage, file), json = JSON.parse(await readFile(filename, 'utf8'));

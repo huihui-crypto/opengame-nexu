@@ -7,9 +7,10 @@ import { inspectGlb } from '../scripts/game-glb-inspect.mjs';
 import { verificationBinaries } from '../scripts/verify-export.ts';
 import type { WorkspaceStore } from '../workspace.ts';
 import { atomicAssetJson, assetHash } from './asset-library.ts';
-import type { CapabilityScriptContext, CapabilityScriptOutput } from './capability-scripts.ts';
+import type { CapabilityScriptContext, CapabilityScriptOutput, CapabilityScriptStage, CapabilityScriptTelemetryMeta } from './capability-scripts.ts';
 import { optimizeGlbTexturesForPublish } from './glb-optimize.ts';
-import { ProviderError, publicProviderFetch, retryRead, type Fetcher } from './network.ts';
+import { ProviderError, publicProviderFetch, retryRead, withErrorMeta, type Fetcher } from './network.ts';
+import type { MediaGenerationMode, MediaGenerationPipelineStep } from '../tracking/tool-fields.ts';
 import { cloud3dModels, cloudSpatialCatalog, cloudWorldModels, mediaSubmitHeaders, productionApi, type Cloud3dModelEntry } from './opendesign.ts';
 import { gatewayFor } from './service.ts';
 
@@ -38,13 +39,41 @@ const MIME_BY_EXT: Record<string, string> = {
 
 type SpatialProvider = 'account' | 'opendesign' | 'env';
 
+type SpatialTelemetryHooks = {
+  report: (stage: CapabilityScriptStage, meta?: CapabilityScriptTelemetryMeta) => void;
+};
+
 type Resolved3dEndpoint = {
   provider: SpatialProvider;
   baseUrl: string;
   apiKey: string;
   taskTimeoutMs: number;
   models: Cloud3dModelEntry[];
+  telemetry?: SpatialTelemetryHooks;
 };
+
+function spatialPipelineStepFor(operation: unknown, isWorld: boolean): MediaGenerationPipelineStep {
+  if (isWorld) return 'world';
+  const op = typeof operation === 'string' ? operation.trim().toLowerCase() : '';
+  if (op === 'rig') return 'rig';
+  if (op === 'retarget' || op === 'rig_retarget') return 'retarget';
+  if (op === 'text_to_model' || op === 'image_to_model' || op === 'multiview_to_model' || op === 'image_to_splat') return 'base';
+  return 'postprocess';
+}
+
+function spatialModeFor(operation: unknown, isWorld: boolean): MediaGenerationMode {
+  const op = typeof operation === 'string' ? operation.trim() : '';
+  if (isWorld) {
+    if (op === 'atlasTextToImage') return 'text-to-world';
+    if (op === 'images2PosedRGBD') return 'image-to-world';
+    return 'edit-world';
+  }
+  if (op === 'text_to_model') return 'text-to-3d';
+  if (op === 'image_to_model' || op === 'multiview_to_model' || op === 'image_to_splat') return 'image-to-3d';
+  if (op === 'rig') return 'rig-3d';
+  if (op === 'retarget' || op === 'rig_retarget') return 'retarget-3d';
+  return 'edit-3d';
+}
 
 export type OpenDesign3dDiscovery = {
   available: boolean;
@@ -406,7 +435,10 @@ async function tripoJson<T = any>(
   }
   if (!res.ok) {
     const detail = parsed?.error?.message || parsed?.error || parsed?.message || parsed?.detail || text.slice(0, 300);
-    throw new ProviderError(`3D gateway HTTP ${res.status} on ${endpoint}: ${String(detail)}`, res.status);
+    const upstreamCode = typeof parsed?.error?.code === 'string'
+      ? parsed.error.code
+      : typeof parsed?.code === 'string' ? parsed.code : undefined;
+    throw new ProviderError(`3D gateway HTTP ${res.status} on ${endpoint}: ${String(detail)}`, res.status, upstreamCode, 'api');
   }
   return parsed as T;
 }
@@ -484,6 +516,7 @@ async function uploadReferenceImage(
   idempotencyKey: string,
 ): Promise<string> {
   const { bytes, contentType, filename } = await prepareUploadReferenceBytes(filePath);
+  config.telemetry?.report('uploading');
 
   const created = await tripoJson<any>(fetcher, config, '/api/v1/media/uploads', {
     method: 'POST',
@@ -515,7 +548,10 @@ async function uploadReferenceImage(
     signal: AbortSignal.timeout(60_000),
   });
   if (!putRes.ok) {
-    throw new Error(`3D reference image PUT failed with HTTP ${putRes.status}`);
+    throw withErrorMeta(new Error(`3D reference image PUT failed with HTTP ${putRes.status}`), {
+      status: putRes.status,
+      errorSource: 'storage',
+    });
   }
 
   await tripoJson(fetcher, config, `/api/v1/media/uploads/${encodeURIComponent(uploadId)}/commit`, {
@@ -572,8 +608,12 @@ async function submitAndWaitTask(
   } = {},
 ): Promise<TripoTaskResult> {
   const taskBasePath = options.taskBasePath ?? '/api/v1/media/3d/tasks';
+  const isWorld = taskBasePath.includes('/worlds/');
+  const pipelineStep = spatialPipelineStepFor(payload.operation, isWorld);
+  const mode = spatialModeFor(payload.operation, isWorld);
   let taskId = options.existingTaskId;
   if (!taskId) {
+    config.telemetry?.report('submitting', { pipelineStep, mode });
     const submissionJobId = deterministicAttributionUuid(idempotencyKey);
     const submitted = await tripoJson<any>(fetcher, config, taskBasePath, {
       method: 'POST',
@@ -587,6 +627,7 @@ async function submitAndWaitTask(
     await options.onSubmitted?.(taskId);
   }
 
+  config.telemetry?.report('polling', { pipelineStep, mode, remoteId: taskId });
   const deadline = Date.now() + config.taskTimeoutMs;
   const pollController = new AbortController();
   while (Date.now() < deadline) {
@@ -594,6 +635,8 @@ async function submitAndWaitTask(
       () => tripoJson<any>(fetcher, config, `${taskBasePath}/${encodeURIComponent(taskId)}`),
       pollController.signal,
       4,
+      async () => { config.telemetry?.report('reconnecting', { pipelineStep, mode, remoteId: taskId }); },
+      async () => { config.telemetry?.report('polling', { pipelineStep, mode, remoteId: taskId }); },
     );
     const status = String(polled.status ?? polled.state ?? '').toLowerCase();
     if (status === 'succeeded' || status === 'completed' || status === 'success') {
@@ -602,7 +645,14 @@ async function submitAndWaitTask(
     }
     if (status === 'failed' || status === 'cancelled' || status === 'canceled' || status === 'error') {
       const errMsg = polled?.error?.message || polled?.error || polled?.message || status;
-      throw new Error(`3D task ${taskId} (${String(payload.operation ?? 'unknown')}) ${status}: ${String(errMsg)}`);
+      const upstreamCode = typeof polled?.error?.code === 'string'
+        ? polled.error.code
+        : typeof polled?.code === 'string' ? polled.code : undefined;
+      config.telemetry?.report('remote_failed', { pipelineStep, mode, remoteId: taskId, remoteTerminal: true });
+      throw withErrorMeta(
+        new Error(`3D task ${taskId} (${String(payload.operation ?? 'unknown')}) ${status}: ${String(errMsg)}`),
+        { ...(upstreamCode ? { upstreamCode } : {}), errorSource: 'api' },
+      );
     }
     await sleep(pollMs);
   }
@@ -611,9 +661,13 @@ async function submitAndWaitTask(
 
 function selectGlbArtifact(artifacts: TripoArtifact[]): TripoArtifact {
   const chosen =
+    artifacts.find(a => a.name === 'pbr_model') ??
     artifacts.find(a => a.name === 'model') ??
+    artifacts.find(a => a.name === 'base_model') ??
     artifacts.find(a => a.name === 'colliderMesh') ??
+    artifacts.find(a => a.name === 'mesh') ??
     artifacts.find(a => typeof a.format === 'string' && a.format.toLowerCase() === 'glb') ??
+    artifacts.find(a => typeof a.content_path === 'string' && a.content_path.includes('artifact=pbr_model')) ??
     artifacts.find(a => typeof a.content_path === 'string' && a.content_path.includes('artifact=model')) ??
     artifacts.find(a => a.content_type === 'model/gltf-binary') ??
     artifacts.find(a => typeof a.content_path === 'string' && a.content_path.endsWith('.glb')) ??
@@ -686,6 +740,7 @@ async function downloadArtifact(
   artifact: TripoArtifact,
   destination: string,
 ): Promise<number> {
+  config.telemetry?.report('downloading');
   const target = resolveArtifactDownloadTarget(config, artifact);
   const controller = new AbortController();
   const buffer = await retryRead(async () => {
@@ -695,11 +750,12 @@ async function downloadArtifact(
       signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
-      throw new ProviderError(`Failed to download 3D GLB artifact: HTTP ${res.status}`, res.status);
+      throw new ProviderError(`Failed to download 3D GLB artifact: HTTP ${res.status}`, res.status, undefined, 'download');
     }
     return readBoundedResponseBuffer(res, MAX_SPATIAL_DOWNLOAD_BYTES);
-  }, controller.signal, 3);
+  }, controller.signal, 3, async () => { config.telemetry?.report('reconnecting'); }, async () => { config.telemetry?.report('downloading'); });
 
+  config.telemetry?.report('decoding');
   if (buffer.length < 20 || buffer.readUInt32LE(0) !== 0x46546c67) {
     throw new Error(`Downloaded 3D artifact is not a valid binary .glb file (size=${buffer.length})`);
   }
@@ -715,11 +771,49 @@ function sanitizeMeshParameters(raw: Record<string, unknown>, defaultFaceLimit: 
     texture: raw.texture !== undefined ? Boolean(raw.texture) : true,
     face_limit: faceLimit,
   };
-  for (const key of ['texture_quality', 'geometry_quality', 'style', 'negative_prompt', 'auto_size', 'orientation']) {
+  for (const key of ['texture_quality', 'geometry_quality', 'style', 'negative_prompt', 'auto_size', 'orientation', 'model_seed', 'texture_seed']) {
     if (raw[key] !== undefined) params[key] = raw[key];
   }
   // Never forward quad=true because Tripo returns FBX instead of GLB.
   return { params, faceLimit };
+}
+
+const TRIPO_BIPED_ANIMATION_SHORT_NAMES = new Set([
+  'idle', 'walk', 'run', 'dive', 'climb', 'jump', 'slash', 'shoot', 'hurt', 'fall', 'turn',
+]);
+const TRIPO_CREATURE_ANIMATION_SHORT_NAMES = new Set([
+  'quadruped:walk', 'hexapod:walk', 'octopod:walk', 'serpentine:march', 'aquatic:march',
+]);
+const TRIPO_RIG_V3_MODEL_VERSION = 'v3.0-20260909';
+const TRIPO_RIG_V3_ONLY_SPECS = new Set(['actorcore', 'unity', 'unreal', 'vrm']);
+const TRIPO_TASK_CHAIN_OPERATIONS = new Set([
+  'decimate', 'retarget', 'texture', 'convert',
+  'segment', 'smartsegment', 'complete', 'uv', 'edit',
+]);
+const TRIPO_MEDIA_PASSTHROUGH_OPERATIONS = new Set([
+  'multiview_to_model',
+]);
+
+/** Normalize Tripo v3 animation identifiers to the required `preset:*` format and fail fast on invalid names. */
+export function normalizeTripoAnimation(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error('Tripo retarget animation name must be non-empty (e.g. "preset:idle", "preset:run", "preset:slash")');
+  }
+  if (/^preset:[a-z0-9_:-]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+  const lower = trimmed.toLowerCase();
+  const withoutMixamo = lower.startsWith('mixamo-') ? lower.slice('mixamo-'.length) : lower;
+  if (TRIPO_BIPED_ANIMATION_SHORT_NAMES.has(withoutMixamo)) {
+    return `preset:${withoutMixamo}`;
+  }
+  if (TRIPO_CREATURE_ANIMATION_SHORT_NAMES.has(lower)) {
+    return `preset:${lower}`;
+  }
+  throw new Error(
+    `Invalid Tripo animation "${trimmed}": Tripo v3 retarget requires "preset:*" identifiers (for example ["preset:idle", "preset:run", "preset:slash"]).`,
+  );
 }
 
 /** Re-encode embedded PNG/JPEG textures inside a GLB 2 file to EXT_texture_webp via pure-Node glb-optimize.ts (preserving resolution, alpha, geometry, skins, and animations). */
@@ -747,24 +841,43 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
   const params = ctx.parameters ?? {};
   const requestedRaw = ctx.model || (typeof params.model === 'string' ? params.model : undefined);
   const requested = parseProviderModel(requestedRaw);
-  const config = await resolveSpatialEndpoint(ctx.store, '3d', false, requested.provider);
-  if (!config) {
+  const resolvedConfig = await resolveSpatialEndpoint(ctx.store, '3d', false, requested.provider);
+  if (!resolvedConfig) {
     throw new Error(
       requested.provider
         ? `CAPABILITY_UNAVAILABLE: Provider ${requested.provider} has no active 3D generation model`
         : 'CAPABILITY_UNAVAILABLE: No active 3D generation model (tripo-3.0) is available on the signed-in OpenDesign account or configured OpenDesign Cloud connection.',
     );
   }
-  if (requested.modelId && !config.models.some(m => m.modelId === requested.modelId)) {
-    throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedRaw} is not available on provider ${config.provider}`);
+  if (requested.modelId && !resolvedConfig.models.some(m => m.modelId === requested.modelId)) {
+    throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedRaw} is not available on provider ${resolvedConfig.provider}`);
   }
   const gateway = gatewayFor(ctx.store);
   const fetcher = resolveFetcher(ctx.store);
   const pollMs = gateway.options.pollMs ?? POLL_INTERVAL_MS;
   const modelId = requested.modelId
-    ?? config.models.find(m => m.modelId === DEFAULT_TRIPO_MODEL)?.modelId
-    ?? config.models[0]?.modelId
+    ?? resolvedConfig.models.find(m => m.modelId === DEFAULT_TRIPO_MODEL)?.modelId
+    ?? resolvedConfig.models[0]?.modelId
     ?? DEFAULT_TRIPO_MODEL;
+  const accountPlan = resolvedConfig.provider === 'account'
+    ? (await gateway.status().catch(() => undefined))?.providers.find(p => p.id === 'account')?.plan
+    : undefined;
+  const config: Resolved3dEndpoint = ctx.reportStage
+    ? {
+        ...resolvedConfig,
+        telemetry: {
+          report: (stage, meta) => ctx.reportStage?.(stage, {
+            provider: resolvedConfig.provider,
+            modelId,
+            providerOrigin: resolvedConfig.baseUrl,
+            spatialKind: 'asset',
+            ...(stage === 'uploading' ? { pipelineStep: 'base' as const, mode: 'image-to-3d' as const } : {}),
+            ...(accountPlan ? { accountPlan } : {}),
+            ...meta,
+          }),
+        },
+      }
+    : resolvedConfig;
 
   const qualityKey = typeof ctx.options.quality === 'string' && ctx.options.quality in QUALITY_PRESETS
     ? ctx.options.quality
@@ -776,27 +889,35 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
   const originalTaskIdParam = typeof params.original_model_task_id === 'string' && params.original_model_task_id.trim()
     ? params.original_model_task_id.trim()
     : undefined;
-  const rigPresetMap: Record<string, string> = {
+  const rigPresetMap: Record<string, string | readonly string[]> = {
     'mixamo-idle': 'preset:idle',
     'mixamo-walk': 'preset:walk',
     'mixamo-run': 'preset:run',
     'mixamo-slash': 'preset:slash',
+    'mixamo-locomotion': ['preset:idle', 'preset:walk', 'preset:run', 'preset:jump'],
+    'mixamo-combat': ['preset:idle', 'preset:run', 'preset:slash', 'preset:hurt', 'preset:fall'],
   };
   const rigPresetOpt = typeof ctx.options.rigPreset === 'string' ? ctx.options.rigPreset : undefined;
   const rigOnlyPreset = rigPresetOpt === 'mixamo-only';
-  const rigPresetAnimation = rigPresetOpt ? rigPresetMap[rigPresetOpt] : undefined;
-  const animationsList = Array.isArray(params.animations)
-    ? params.animations.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).map(entry => entry.trim())
+  const rigPresetSpec = rigPresetOpt ? rigPresetMap[rigPresetOpt] : undefined;
+  const rigPresetAnimation = typeof rigPresetSpec === 'string' ? rigPresetSpec : undefined;
+  const rigPresetAnimations = Array.isArray(rigPresetSpec) ? [...rigPresetSpec] : [];
+  const rawAnimationsList = Array.isArray(params.animations)
+    ? params.animations.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
     : [];
-  const animation = (typeof params.animation === 'string' && params.animation.trim())
+  const animationsList = (rawAnimationsList.length > 0 ? rawAnimationsList : rigPresetAnimations).map(normalizeTripoAnimation);
+  const rawAnimation = (typeof params.animation === 'string' && params.animation.trim())
     || rigPresetAnimation
     || (typeof ctx.options.animation === 'string' && ctx.options.animation !== 'none' ? ctx.options.animation : undefined);
+  const animation = rawAnimation ? normalizeTripoAnimation(rawAnimation) : undefined;
   const hasRetargetAnimation = Boolean(animation || animationsList.length > 0);
 
   let effectiveOp = explicitParamOp ?? optionOp;
   if (effectiveOp === 'auto') {
     if (originalTaskIdParam) {
       effectiveOp = hasRetargetAnimation ? 'rig_retarget' : 'rig';
+    } else if (ctx.references.length >= 2 && !hasRetargetAnimation && !rigOnlyPreset) {
+      effectiveOp = 'multiview_to_model';
     } else if (ctx.references.length === 1) {
       effectiveOp = hasRetargetAnimation ? 'rig_retarget' : rigOnlyPreset ? 'rig' : 'image_to_model';
     } else {
@@ -809,6 +930,9 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
     if (effectiveOp === 'image_to_model' && ctx.references.length !== 1) {
       throw new Error('3d-asset image_to_model requires exactly 1 reference image asset');
     }
+    if (effectiveOp === 'text_to_model' && ctx.references.length > 0) {
+      throw new Error('3d-asset text_to_model does not accept reference images (use image_to_model for 1 image or multiview_to_model for 2–4 images)');
+    }
     if (effectiveOp === 'text_to_model' && !ctx.prompt.trim()) {
       throw new Error('3d-asset text_to_model requires a non-empty prompt');
     }
@@ -818,7 +942,7 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
   }
   if (effectiveOp === 'rig_retarget' && !hasRetargetAnimation) {
     throw new Error(
-      '3d-asset operation=rig_retarget requires an animation (pass options.rigPreset such as mixamo-idle/mixamo-walk/mixamo-run/mixamo-slash, or parameters.animation / parameters.animations; use operation="rig" for skeleton-only rigging)',
+      '3d-asset operation=rig_retarget requires an animation (pass options.rigPreset such as mixamo-locomotion/mixamo-combat/mixamo-idle/mixamo-walk/mixamo-run/mixamo-slash, or parameters.animation / parameters.animations; use operation="rig" for skeleton-only rigging)',
     );
   }
 
@@ -850,6 +974,9 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
   let finalTask: TripoTaskResult;
 
   if (effectiveOp === 'text_to_model') {
+    if (ctx.references.length > 0) {
+      throw new Error('3d-asset text_to_model does not accept reference images (use image_to_model for 1 image or multiview_to_model for 2–4 images)');
+    }
     if (!ctx.prompt.trim()) {
       throw new Error('3d-asset text_to_model requires a non-empty prompt');
     }
@@ -880,6 +1007,12 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
     });
     baseTaskId = finalTask.taskId;
   } else if (effectiveOp === 'rig_retarget' || effectiveOp === 'rig') {
+    if (ctx.references.length > 1) {
+      throw new Error(`3d-asset operation=${effectiveOp} accepts at most 1 reference image (use multiview_to_model first for 2–4 images, then pass parameters.original_model_task_id)`);
+    }
+    if (originalTaskIdParam && ctx.references.length > 0) {
+      throw new Error(`3d-asset operation=${effectiveOp} with parameters.original_model_task_id does not accept reference images`);
+    }
     if (!baseTaskId) {
       if (ctx.references.length === 1) {
         const uploadId = await ensureUploadedRef();
@@ -909,6 +1042,11 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
         throw new Error('3d-asset rig_retarget requires parameters.original_model_task_id, a prompt, or 1 reference image');
       }
     }
+    const rigType = typeof params.rig_type === 'string' && params.rig_type.trim() ? params.rig_type.trim() : 'biped';
+    const rigSpec = typeof params.spec === 'string' && params.spec.trim() ? params.spec.trim() : 'mixamo';
+    const defaultRigVersion = rigType !== 'biped' || TRIPO_RIG_V3_ONLY_SPECS.has(rigSpec)
+      ? TRIPO_RIG_V3_MODEL_VERSION
+      : DEFAULT_RIG_MODEL_VERSION;
     const rigTask = await submitAndWaitTask(fetcher, config, {
       model: modelId,
       operation: 'rig',
@@ -916,9 +1054,9 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
         original_model_task_id: baseTaskId,
         model_version: typeof params.model_version === 'string' && params.model_version.trim()
           ? params.model_version.trim()
-          : DEFAULT_RIG_MODEL_VERSION,
-        rig_type: typeof params.rig_type === 'string' ? params.rig_type : 'biped',
-        spec: typeof params.spec === 'string' ? params.spec : 'mixamo',
+          : defaultRigVersion,
+        rig_type: rigType,
+        spec: rigSpec,
         out_format: 'glb',
       },
     }, `${ctx.requestId}-rig`, pollMs, {
@@ -944,9 +1082,12 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
     } else {
       finalTask = rigTask;
     }
-  } else if (['decimate', 'retarget', 'texture', 'convert'].includes(effectiveOp)) {
+  } else if (TRIPO_TASK_CHAIN_OPERATIONS.has(effectiveOp)) {
     if (!originalTaskIdParam) {
       throw new Error(`3d-asset operation=${effectiveOp} requires parameters.original_model_task_id`);
+    }
+    if (ctx.references.length > 0) {
+      throw new Error(`3d-asset operation=${effectiveOp} operates on parameters.original_model_task_id and does not accept reference images`);
     }
     const passthrough: Record<string, unknown> = { ...params };
     delete passthrough.model;
@@ -956,13 +1097,29 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
     delete passthrough.jpeg_quality;
     delete passthrough.quad;
     if (effectiveOp === 'retarget' || effectiveOp === 'convert') {
-      passthrough.out_format ??= 'glb';
+      if (passthrough.out_format !== undefined && String(passthrough.out_format).trim().toLowerCase() !== 'glb') {
+        throw new Error(`3d-asset operation=${effectiveOp} only imports GLB outputs (out_format="glb")`);
+      }
+      passthrough.out_format = 'glb';
     }
     if (effectiveOp === 'retarget') {
+      if (!hasRetargetAnimation) {
+        throw new Error(
+          '3d-asset operation=retarget requires an animation (pass parameters.animation="preset:idle" or parameters.animations=["preset:idle","preset:run","preset:slash"], or options.rigPreset)',
+        );
+      }
       retargetRan = true;
-    }
-    if (effectiveOp === 'retarget' && animation && !passthrough.animation) {
-      passthrough.animation = animation;
+      if (passthrough.animate_in_place === undefined) {
+        passthrough.animate_in_place = true;
+      }
+      // Tripo v3 treats `animation` and `animations` as mutually exclusive; normalize and send only one.
+      if (animationsList.length > 0) {
+        passthrough.animations = animationsList;
+        delete passthrough.animation;
+      } else if (animation) {
+        passthrough.animation = animation;
+        delete passthrough.animations;
+      }
     }
     finalTask = await submitAndWaitTask(fetcher, config, {
       model: modelId,
@@ -973,8 +1130,40 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
       existingTaskId: checkpoint.retargetTaskId,
       onSubmitted: async id => { checkpoint.retargetTaskId = id; await saveCheckpoint(checkpointPath, checkpoint); },
     });
+  } else if (TRIPO_MEDIA_PASSTHROUGH_OPERATIONS.has(effectiveOp)) {
+    if (effectiveOp === 'multiview_to_model' && ctx.references.length < 2 && !Array.isArray(params.files)) {
+      throw new Error('3d-asset operation=multiview_to_model requires at least 2 reference image assets (or parameters.files)');
+    }
+    const passthrough: Record<string, unknown> = { ...params };
+    delete passthrough.model;
+    delete passthrough.operation;
+    delete passthrough.slim;
+    delete passthrough.max_texture_size;
+    delete passthrough.jpeg_quality;
+    delete passthrough.quad;
+    let uploadedIds: string[] | undefined = checkpoint.uploadAssetIds;
+    if (!uploadedIds && ctx.references.length > 0) {
+      uploadedIds = [];
+      for (const [idx, ref] of ctx.references.entries()) {
+        const uploadId = await uploadReferenceImage(fetcher, config, ref.filename, `${ctx.requestId}-ref-${idx}`);
+        uploadedIds.push(uploadId);
+      }
+      checkpoint.uploadAssetIds = uploadedIds;
+      await saveCheckpoint(checkpointPath, checkpoint);
+    }
+    finalTask = await submitAndWaitTask(fetcher, config, {
+      model: modelId,
+      operation: effectiveOp,
+      ...(ctx.prompt.trim() ? { prompt: ctx.prompt.trim() } : {}),
+      ...(uploadedIds?.length ? { image_asset_ids: uploadedIds } : {}),
+      ...(Object.keys(passthrough).length ? { parameters: passthrough } : {}),
+    }, `${ctx.requestId}-${effectiveOp.replace(/[^a-zA-Z0-9_-]/g, '_')}`, pollMs, {
+      existingTaskId: checkpoint.baseTaskId,
+      onSubmitted: async id => { checkpoint.baseTaskId = id; await saveCheckpoint(checkpointPath, checkpoint); },
+    });
+    baseTaskId = finalTask.taskId;
   } else {
-    throw new Error(`Unsupported 3d-asset operation: ${effectiveOp}`);
+    throw new Error(`Unsupported 3d-asset operation: ${effectiveOp} (3d-asset only supports GLB-producing Tripo operations)`);
   }
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'openmotion-3d-'));
@@ -987,6 +1176,7 @@ export async function runOpenDesign3dScript(ctx: CapabilityScriptContext): Promi
   try {
     const rawPath = path.join(tempDir, 'raw.glb');
     const slimPath = path.join(tempDir, 'slim.glb');
+    config.telemetry?.report('decoding');
     const artifact = selectGlbArtifact(finalTask.artifacts);
     const rawBytes = await downloadArtifact(fetcher, config, artifact, rawPath);
 
@@ -1130,6 +1320,7 @@ async function downloadRawArtifact(
   config: Resolved3dEndpoint,
   artifact: TripoArtifact,
 ): Promise<{ buffer: Buffer; contentType: string | null }> {
+  config.telemetry?.report('downloading');
   const target = resolveArtifactDownloadTarget(config, artifact);
   const controller = new AbortController();
   return retryRead(async () => {
@@ -1139,35 +1330,55 @@ async function downloadRawArtifact(
       signal: AbortSignal.timeout(90_000),
     });
     if (!res.ok) {
-      throw new ProviderError(`Failed to download 3D world artifact: HTTP ${res.status}`, res.status);
+      throw new ProviderError(`Failed to download 3D world artifact: HTTP ${res.status}`, res.status, undefined, 'download');
     }
     const buffer = await readBoundedResponseBuffer(res, MAX_SPATIAL_DOWNLOAD_BYTES);
     return { buffer, contentType: res.headers.get('content-type') };
-  }, controller.signal, 3);
+  }, controller.signal, 3, async () => { config.telemetry?.report('reconnecting'); }, async () => { config.telemetry?.report('downloading'); });
 }
 
 export async function runOpenDesignWorldScript(ctx: CapabilityScriptContext): Promise<CapabilityScriptOutput> {
   const params = ctx.parameters ?? {};
   const requestedRaw = ctx.model || (typeof params.model === 'string' ? params.model : undefined);
   const requested = parseProviderModel(requestedRaw);
-  const config = await resolveSpatialEndpoint(ctx.store, 'world', false, requested.provider);
-  if (!config) {
+  const resolvedConfig = await resolveSpatialEndpoint(ctx.store, 'world', false, requested.provider);
+  if (!resolvedConfig) {
     throw new Error(
       requested.provider
         ? `CAPABILITY_UNAVAILABLE: Provider ${requested.provider} has no active 3D world model`
         : 'CAPABILITY_UNAVAILABLE: No active 3D world model (e.g. worldlabs-atlas) is exposed on your configured OpenDesign account or Cloud gateway.',
     );
   }
-  if (requested.modelId && !config.models.some(m => m.modelId === requested.modelId)) {
-    throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedRaw} is not available on provider ${config.provider}`);
+  if (requested.modelId && !resolvedConfig.models.some(m => m.modelId === requested.modelId)) {
+    throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedRaw} is not available on provider ${resolvedConfig.provider}`);
   }
   const gateway = gatewayFor(ctx.store);
   const fetcher = resolveFetcher(ctx.store);
   const pollMs = gateway.options.pollMs ?? POLL_INTERVAL_MS;
   const modelId = requested.modelId
-    ?? config.models.find(m => m.modelId === DEFAULT_WORLD_MODEL)?.modelId
-    ?? config.models[0]?.modelId
+    ?? resolvedConfig.models.find(m => m.modelId === DEFAULT_WORLD_MODEL)?.modelId
+    ?? resolvedConfig.models[0]?.modelId
     ?? DEFAULT_WORLD_MODEL;
+  const accountPlan = resolvedConfig.provider === 'account'
+    ? (await gateway.status().catch(() => undefined))?.providers.find(p => p.id === 'account')?.plan
+    : undefined;
+  const config: Resolved3dEndpoint = ctx.reportStage
+    ? {
+        ...resolvedConfig,
+        telemetry: {
+          report: (stage, meta) => ctx.reportStage?.(stage, {
+            provider: resolvedConfig.provider,
+            modelId,
+            providerOrigin: resolvedConfig.baseUrl,
+            spatialKind: 'world',
+            pipelineStep: 'world',
+            ...(stage === 'uploading' ? { mode: 'image-to-world' as const } : {}),
+            ...(accountPlan ? { accountPlan } : {}),
+            ...meta,
+          }),
+        },
+      }
+    : resolvedConfig;
 
   const rawParamOp = typeof params.operation === 'string' && params.operation.trim() ? params.operation.trim() : undefined;
   const explicitParamOp = rawParamOp && rawParamOp !== 'auto' ? rawParamOp : undefined;
@@ -1203,11 +1414,24 @@ export async function runOpenDesignWorldScript(ctx: CapabilityScriptContext): Pr
       throw new Error('3d-world operation=atlasTextToImage requires a non-empty prompt');
     }
   } else if (operation === 'atlasGenerate') {
-    const hasContextFrames = Array.isArray(passthrough.contextFrames) && passthrough.contextFrames.length > 0;
-    const hasTargetCameras = Array.isArray(passthrough.targetCameras) && passthrough.targetCameras.length > 0;
-    if (!hasContextFrames || !hasTargetCameras) {
+    const contextFrames = Array.isArray(passthrough.contextFrames) ? passthrough.contextFrames : [];
+    const targetCameras = Array.isArray(passthrough.targetCameras) ? passthrough.targetCameras : [];
+    if (contextFrames.length === 0 || targetCameras.length === 0) {
       throw new Error(
         '3d-world operation=atlasGenerate requires non-empty parameters.contextFrames and parameters.targetCameras (for text-only scene generation use operation="atlasTextToImage")',
+      );
+    }
+    const validFrame = contextFrames.every(frame =>
+      Boolean(frame) && typeof frame === 'object' && !Array.isArray(frame)
+      && Boolean((frame as Record<string, unknown>).imageAsset) && Boolean((frame as Record<string, unknown>).camera),
+    );
+    const validCam = targetCameras.every(cam =>
+      Boolean(cam) && typeof cam === 'object' && !Array.isArray(cam)
+      && Boolean((cam as Record<string, unknown>).extrinsics) && Boolean((cam as Record<string, unknown>).intrinsics),
+    );
+    if (!validFrame || !validCam) {
+      throw new Error(
+        '3d-world operation=atlasGenerate expects contextFrames items with { imageAsset, camera, depth? } and targetCameras items with { extrinsics, intrinsics } (from images2PosedRGBD or aligned RGB-D assets).',
       );
     }
   } else if (operation === 'images2PosedRGBD') {
@@ -1272,8 +1496,10 @@ export async function runOpenDesignWorldScript(ctx: CapabilityScriptContext): Pr
     await rm(checkpointPath, { force: true }).catch(() => {});
   };
   try {
+    config.telemetry?.report('decoding');
     const artifact = selectWorldArtifact(task.artifacts, preferredArtifact);
     const { buffer, contentType } = await downloadRawArtifact(fetcher, config, artifact);
+    config.telemetry?.report('decoding');
     const detected = detectDownloadedArtifactFormat(buffer, contentType, artifact);
     const artifactDescriptors = task.artifacts.map(a => ({
       ...(a.name ? { name: a.name } : {}),

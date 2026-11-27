@@ -13,6 +13,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { browserExecutable, browserAutomation } from './browser.ts';
 import type { Page, Browser, KeyInput } from 'puppeteer-core';
 import { assetHttp } from './gateway/asset-http.ts';
+import { buildMediaSettingsHandoff } from './gateway/media-use.ts';
 import { buildPublishBundle } from './gateway/web-publish-bundle.ts';
 import { WorkspaceStore } from './workspace.ts';
 import { ensureRuntime, execute, pluginRoot, HYPERFRAMES_VERSION } from './hyperframes.ts';
@@ -181,11 +182,13 @@ async function inspectLocalModuleGraph(
   entryScripts: string[],
   inlineScripts: string[],
   allowedHosts: string[],
-): Promise<{ diagnostics: { path: string; message: string }[]; importsLogic: boolean; visitedModules: string[] }> {
+): Promise<{ diagnostics: { path: string; message: string }[]; importsLogic: boolean; visitedModules: string[]; moduleSources: Map<string, string>; importsThree: boolean }> {
   const diagnostics: { path: string; message: string }[] = [];
   const visited = new Set<string>();
+  const moduleSources = new Map<string, string>();
   const queue: string[] = [];
   let importsLogic = false;
+  let importsThree = false;
 
   const enqueueSpecifier = async (fromPath: string, specifier: string) => {
     const clean = specifier.replace(/[?#].*$/, '');
@@ -202,6 +205,7 @@ async function inspectLocalModuleGraph(
     const baseDir = fromPath === 'index.html' ? '' : path.posix.dirname(fromPath);
     const resolved = path.posix.normalize(baseDir && baseDir !== '.' ? `${baseDir}/${clean}` : clean);
     if (resolved === 'logic.js') importsLogic = true;
+    if (/^vendor\/(?:three\.module(?:\.min)?|GLTFLoader|SkeletonUtils|HumanoidRigController)\.js$/i.test(resolved)) importsThree = true;
     try {
       const target = await safeFile(dir, resolved);
       if (!(await lstat(target)).isFile()) {
@@ -237,6 +241,7 @@ async function inspectLocalModuleGraph(
     } catch {
       continue;
     }
+    moduleSources.set(relative, source);
     if (relative !== 'client.js') {
       diagnostics.push(...findDisallowedHostDiagnostics(relative, source, allowedHosts));
     }
@@ -247,7 +252,70 @@ async function inspectLocalModuleGraph(
     }
     for (const specifier of specifiers) await enqueueSpecifier(relative, specifier);
   }
-  return { diagnostics, importsLogic, visitedModules: [...visited] };
+  return { diagnostics, importsLogic, visitedModules: [...visited], moduleSources, importsThree };
+}
+
+function stripJsComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:\\])\/\/[^\n]*/g, '$1');
+}
+
+/** Advisory static audit for high-frequency 3D humanoid kinematics anti-patterns. */
+export function inspect3dKinematicsWarnings(
+  moduleSources: Map<string, string>,
+  options: { hasFixedLogicTick: boolean },
+): string[] {
+  const warnings: string[] = [];
+  const allNonVendorCode = [...moduleSources.entries()]
+    .filter(([rel]) => rel !== 'logic.js' && !rel.startsWith('vendor/'))
+    .map(([, raw]) => stripJsComments(raw))
+    .join('\n');
+  const usesAnyClipPlayback = /\.(?:playClip|playOnce|addClips|retargetClipsFrom)\s*\(|\bAnimationMixer\b/.test(allNonVendorCode);
+
+  for (const [relative, raw] of moduleSources.entries()) {
+    if (relative === 'logic.js' || relative.startsWith('vendor/')) continue;
+    const code = stripJsComments(raw);
+    const usesSharedRig = /HumanoidRigController|createHumanoidRig/.test(code);
+    if (usesSharedRig) {
+      const drivesManualArmIk = /\b(?:rightHand|leftHand)\s*:/.test(code);
+      if (drivesManualArmIk && !usesAnyClipPlayback) {
+        warnings.push(
+          `3D motion advisory in ${relative}: HumanoidRigController drives manual arm IK without any skeletal clip playback (playClip/playOnce/retargetClipsFrom). Attach native Mixamo clips via 3d-asset (rig_retarget or 1-step retarget on an existing rigTaskId with multi-clip rigPreset "mixamo-combat"/"mixamo-locomotion") or rig.retargetClipsFrom(...) for full-body locomotion, attacks, hit reactions, and defeat poses.`,
+        );
+      }
+      continue;
+    }
+
+    const touchesBones = /\bisBone\b|mixamorig|\bsk\s*\[|\bbones\s*\[/.test(code);
+    const copiesRestQuat = /\.quaternion\.copy\s*\(/.test(code);
+    const hasSmoothing = /\.slerp\s*\(|\bAnimationMixer\b/.test(code);
+    if (touchesBones && copiesRestQuat && !hasSmoothing) {
+      warnings.push(
+        `3D kinematics risk in ${relative}: bone quaternions are reset via .quaternion.copy() without Quaternion.slerp, AnimationMixer, or vendor/HumanoidRigController.js — state switches will snap in 1 frame. Use vendor/HumanoidRigController.js or slerp persistent per-bone quaternions.`,
+      );
+    }
+
+    const usesFrameDeltaGait =
+      options.hasFixedLogicTick
+      && /Math\.hypot\s*\([^)]*-[^)]*,[^)]*-[^)]*\)/.test(code)
+      && /\b(?:walking|moving|isWalking|isMoving)\s*=\s*[a-zA-Z_$][\w$]*\s*>/.test(code)
+      && !/Math\.exp\s*\(|smoothWalk|walkBlend/.test(code);
+    if (usesFrameDeltaGait) {
+      warnings.push(
+        `3D kinematics risk in ${relative}: walking/gait state is derived from raw render-frame displacement against a fixed-tick simulation without exponential smoothing — non-tick frames on 60/120 Hz displays drop delta to 0 and cause 30 Hz leg flicker. Use vendor/HumanoidRigController.js (syncTransform) or low-pass filter continuous velocity.`,
+      );
+    }
+
+    const diyHumanoidSkinning =
+      /(?:GLTFLoader|loadModel)/.test(code)
+      && /setAttribute\s*\(\s*['"]skin(?:Index|Weight)['"]/.test(code)
+      && /mixamorig|RightArm|LeftArm|RightUpLeg|LeftUpLeg|Spine/.test(code);
+    if (diyHumanoidSkinning) {
+      warnings.push(
+        `3D rigging risk in ${relative}: manual runtime skinIndex/skinWeight synthesis detected on humanoid geometry. Use real Mixamo auto-rigging (3d-asset operation="rig_retarget") and vendor/HumanoidRigController.js instead of DIY bounding-box skinning.`,
+      );
+    }
+  }
+  return warnings;
 }
 async function inventory(root: string, prefix = ''): Promise<{ path: string; bytes: number }[]> {
   const result: { path: string; bytes: number }[] = [];
@@ -387,6 +455,7 @@ export type GameBrowserAction =
   | { type: 'mouse'; event: 'move' | 'down' | 'up' | 'click'; x?: number; y?: number; selector?: string; button?: 'left' | 'middle' | 'right' }
   | { type: 'wait'; ms: number }
   | { type: 'screenshot'; label?: string }
+  | { type: 'burst'; count: number; intervalMs?: number; label?: string }
   | { type: 'action'; action: Record<string, unknown> };
 
 export function validateGameScript(value: unknown): GameBrowserAction[] {
@@ -407,12 +476,20 @@ export function validateGameScript(value: unknown): GameBrowserAction[] {
     } else if (a.type === 'screenshot') {
       if (a.label !== undefined && (typeof a.label !== 'string' || !/^[a-zA-Z0-9_-]{1,40}$/.test(a.label))) throw new GameError('Screenshot labels must be 1–40 ASCII alphanumeric/dash/underscore characters');
       if (++screenshots > 8) throw new GameError('Use at most 8 screenshot actions per client');
+    } else if (a.type === 'burst') {
+      if (!Number.isInteger(a.count) || a.count < 2 || a.count > 6) throw new GameError('Burst count must be an integer 2–6');
+      const intervalMs = a.intervalMs ?? 100;
+      if (!Number.isInteger(intervalMs) || intervalMs < 50 || intervalMs > 500) throw new GameError('Burst intervalMs must be an integer 50–500');
+      if (a.label !== undefined && (typeof a.label !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(a.label))) throw new GameError('Burst labels must be 1–32 ASCII alphanumeric/dash/underscore characters');
+      screenshots += a.count;
+      if (screenshots > 8) throw new GameError('Use at most 8 screenshot actions per client');
+      waits += (a.count - 1) * intervalMs;
     } else if (a.type === 'action') {
       if (!a.action || typeof a.action !== 'object' || Array.isArray(a.action)) throw new GameError('Action payload must be a JSON object');
       let serialized = '';
       try { serialized = JSON.stringify(a.action); } catch { throw new GameError('Action payload must be JSON-serializable'); }
       if (!serialized || serialized.length > 16384) throw new GameError('Action payload must be at most 16 KiB');
-    } else throw new GameError('Only key, mouse, wait, screenshot and action actions are supported');
+    } else throw new GameError('Only key, mouse, wait, screenshot, burst and action actions are supported');
   }
   if (waits > 60000) throw new GameError('Script waits must total at most 60000 ms');
   return value;
@@ -573,6 +650,88 @@ export function normalizeSelfTestAssertions(raw: unknown): Array<{ name: string;
   return rows.slice(0, 50);
 }
 
+export function normalizeKinematicsAssertions(raw: unknown): Array<{ name: string; passed: boolean; expected: string; actual: unknown; reason?: string }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+  const obj = raw as Record<string, unknown>;
+  const isSingleTelemetry = typeof obj.frames === 'number'
+    || typeof obj.maxBoneRadPerSec === 'number'
+    || typeof obj.maxBoneStepRad === 'number'
+    || typeof obj.maxYawRadPerSec === 'number'
+    || typeof obj.walkZeroFlips === 'number';
+  const entries: Array<[string, Record<string, unknown>]> = isSingleTelemetry
+    ? [['', obj]]
+    : Object.entries(obj)
+      .filter(([, value]) => value && typeof value === 'object' && !Array.isArray(value))
+      .map(([key, value]) => [key, value as Record<string, unknown>]);
+
+  const rows: Array<{ name: string; passed: boolean; expected: string; actual: unknown; reason?: string }> = [];
+  for (const [label, metrics] of entries.slice(0, 8)) {
+    const frames = typeof metrics.frames === 'number' ? metrics.frames : 10;
+    if (frames < 5) continue;
+    const prefix = label ? `kinematics:${label}:` : 'kinematics:';
+    if (typeof metrics.walkZeroFlips === 'number' && Number.isFinite(metrics.walkZeroFlips)) {
+      const passed = metrics.walkZeroFlips <= 1;
+      rows.push({
+        name: `${prefix}noWalkFlicker`,
+        passed,
+        expected: 'walkZeroFlips <= 1 (no 30 Hz square-wave gait flicker)',
+        actual: metrics.walkZeroFlips,
+        ...(passed ? {} : { reason: `Detected ${metrics.walkZeroFlips} adjacent-frame walk-blend drop-to-zero oscillations` }),
+      });
+    }
+    if (typeof metrics.maxBoneRadPerSec === 'number' && Number.isFinite(metrics.maxBoneRadPerSec)) {
+      const passed = metrics.maxBoneRadPerSec <= 22;
+      rows.push({
+        name: `${prefix}smoothBoneMotion`,
+        passed,
+        expected: 'maxBoneRadPerSec <= 22 rad/s (frame-rate independent joint-snap guard)',
+        actual: +metrics.maxBoneRadPerSec.toFixed(2),
+        ...(passed ? {} : { reason: `Peak bone angular rate ${metrics.maxBoneRadPerSec.toFixed(2)} rad/s exceeds 22 rad/s` }),
+      });
+    } else if (typeof metrics.maxBoneStepRad === 'number' && Number.isFinite(metrics.maxBoneStepRad)) {
+      const passed = metrics.maxBoneStepRad <= 0.65;
+      rows.push({
+        name: `${prefix}smoothBoneMotion`,
+        passed,
+        expected: 'maxBoneStepRad <= 0.65 rad/frame (no 1-frame joint snaps)',
+        actual: +metrics.maxBoneStepRad.toFixed(3),
+        ...(passed ? {} : { reason: `Peak single-frame bone step ${metrics.maxBoneStepRad.toFixed(3)} rad exceeds 0.65 rad` }),
+      });
+    }
+    if (typeof metrics.maxYawRadPerSec === 'number' && Number.isFinite(metrics.maxYawRadPerSec)) {
+      const passed = metrics.maxYawRadPerSec <= 18;
+      rows.push({
+        name: `${prefix}smoothYaw`,
+        passed,
+        expected: 'maxYawRadPerSec <= 18 rad/s (frame-rate independent yaw-jitter guard)',
+        actual: +metrics.maxYawRadPerSec.toFixed(2),
+        ...(passed ? {} : { reason: `Peak yaw angular rate ${metrics.maxYawRadPerSec.toFixed(2)} rad/s exceeds 18 rad/s` }),
+      });
+    } else if (typeof metrics.maxYawStepRad === 'number' && Number.isFinite(metrics.maxYawStepRad)) {
+      const passed = metrics.maxYawStepRad <= 0.45;
+      rows.push({
+        name: `${prefix}smoothYaw`,
+        passed,
+        expected: 'maxYawStepRad <= 0.45 rad/frame (no yaw spin-jitter)',
+        actual: +metrics.maxYawStepRad.toFixed(3),
+        ...(passed ? {} : { reason: `Peak single-frame yaw step ${metrics.maxYawStepRad.toFixed(3)} rad exceeds 0.45 rad` }),
+      });
+    }
+    if (frames >= 10 && typeof metrics.overExtendedIkCount === 'number' && Number.isFinite(metrics.overExtendedIkCount)) {
+      const ratio = metrics.overExtendedIkCount / frames;
+      const passed = ratio <= 0.35;
+      rows.push({
+        name: `${prefix}ikReach`,
+        passed,
+        expected: 'overExtendedIkCount / frames <= 0.35 (IK hand targets within real arm reach)',
+        actual: { overExtendedIkCount: metrics.overExtendedIkCount, frames, ratio: +ratio.toFixed(2) },
+        ...(passed ? {} : { reason: `Arm IK targets exceeded real reach ${metrics.overExtendedIkCount} times across ${frames} frames (${(ratio * 100).toFixed(0)}%) — drive actions with native clips (playClip/playOnce) or keep IK targets inside rig.metrics arm maxReach` }),
+      });
+    }
+  }
+  return rows;
+}
+
 export function gamePlaytestAssertions(input: {before:any;after:any;clients:number;script:GameBrowserAction[];mobile:{width:number;height:number;scrollWidth:number;overflowElements?:string[]};movementThreshold?:number;expectedPhase?:string;autoJoin?:{joined:boolean;elapsedMs:number|null};selfTests?:unknown}) {
   const state=input.after?.state,players=state?.players;
   const count=players&&typeof players==='object'?Object.values(players).filter((p:any)=>p?.connected!==false).length:0;
@@ -590,6 +749,7 @@ export function gamePlaytestAssertions(input: {before:any;after:any;clients:numb
       ?{name:'scriptedMovement',passed:Boolean(state&&self),skipped:true,expected:'movement not asserted (threshold 0)',actual:distance,reason:state&&self?undefined:'Missing authoritative __omGame state or selfId'}
       :{name:'scriptedMovement',passed:scripted&&distance!==null&&distance>(input.movementThreshold??.5),expected:`net displacement > ${input.movementThreshold??.5} world units`,actual:distance,reason:scripted?(distance===null?'Missing selfId or authoritative coordinates':undefined):'No directional key input was scripted'},
     {name:'mobileHorizontalOverflow',passed:input.mobile.width===390&&input.mobile.height===844&&input.mobile.scrollWidth<=391&&!(input.mobile.overflowElements?.length),expected:'390x844 viewport without horizontal overflow',actual:input.mobile},
+    ...normalizeKinematicsAssertions(input.after?.stats?.kinematics),
     ...normalizeSelfTestAssertions(input.selfTests),
   ];
 }
@@ -1190,6 +1350,11 @@ server.listen(port, '127.0.0.1', () => {
       runtime.setup(players);
       for (let tick = 0; tick < 50; tick++) { runtime.tick(tick); for (const player of players) { runtime.apply(player, { type: 'noop' }, game.multiplayer); runtime.view(player); } if (runtime.over().over) break; }
     } catch (e) { diagnostics.push({ path: 'logic.js', message: (e as Error).message }); }
+    if (game.style === '3d' || moduleGraph.importsThree) {
+      const hasFixedLogicTick = (logic !== null && !isUnusedStarterLogic)
+        || [...moduleGraph.moduleSources.values()].some(src => /\btickRate\b|1\s*\/\s*(?:20|30)\b/.test(src));
+      warnings.push(...inspect3dKinematicsWarnings(moduleGraph.moduleSources, { hasFixedLogicTick }));
+    }
     return { id, passed: diagnostics.length === 0, diagnostics, warnings };
   }
   async status(id: string, status: unknown) { return this.mutate(async () => {
@@ -1545,6 +1710,20 @@ server.listen(port, '127.0.0.1', () => {
             await page.screenshot({ path: shotPath as `${string}.png`, type: 'png' });
             clientScreenshots[clientIndex].push({ label, path: shotPath });
           }
+          else if(a.type==='burst'){
+            const baseLabel = a.label ?? 'burst';
+            const intervalMs = a.intervalMs ?? 100;
+            for (let frameIdx = 0; frameIdx < a.count; frameIdx++) {
+              if (frameIdx > 0) await new Promise(resolve => setTimeout(resolve, intervalMs));
+              const label = `${baseLabel}_${frameIdx + 1}`;
+              const relative = `assets/playtests/${room}-${clientIndex+1}-${label}-${randomUUID().slice(0,8)}.png`;
+              const shotPath = await safeFile(dir, relative, true);
+              await mkdir(path.dirname(shotPath), { recursive: true });
+              await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+              await page.screenshot({ path: shotPath as `${string}.png`, type: 'png' });
+              clientScreenshots[clientIndex].push({ label, path: shotPath });
+            }
+          }
           else if(a.type==='key'){const key=(a.key==='Space'?'Space':a.key) as KeyInput;if(a.event==='down')await page.keyboard.down(key);else if(a.event==='up')await page.keyboard.up(key);else await page.keyboard.press(key);}
           else if(a.selector)await page.click(a.selector,{button:a.button??'left'});
           else {await page.mouse.move(a.x!,a.y!);if(a.event==='click')await page.mouse.click(a.x!,a.y!,{button:a.button??'left'});else if(a.event==='down')await page.mouse.down({button:a.button??'left'});else if(a.event==='up')await page.mouse.up({button:a.button??'left'});}
@@ -1591,12 +1770,24 @@ server.listen(port, '127.0.0.1', () => {
   async staticFile(id: string, relative: string) {
     if (relative.toLowerCase() === 'game.json' || relative.toLowerCase()==='trailer/job.json' || isPublishRecord(relative)) throw new GameError('Private game metadata', 404);
     const card = await this.locateCard(id);
+    const cachedTemplateDir = card.source === 'template' ? this.hosted.cachedDirectory(card.dir) : undefined;
     const root = relative.startsWith('trailer/') ? await this.trailerStorage(id)
-      : card.source === 'template' && relative === 'index.html' ? await this.hosted.directory(id, card.dir) : card.dir;
+      : card.source === 'template' && relative === 'index.html' ? await this.hosted.directory(id, card.dir)
+      : cachedTemplateDir ?? card.dir;
     let file: string;
     try { file = await safeFile(root, relative); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || card.source !== 'template' || root !== card.dir) throw error;
+      if (
+        (error as NodeJS.ErrnoException).code !== 'ENOENT'
+        || card.source !== 'template'
+        || relative === 'index.html'
+        || (root !== card.dir && root !== cachedTemplateDir)
+      ) throw error;
+      if (root !== card.dir) {
+        const cacheExists = await access(root).then(() => true, () => false);
+        if (cacheExists) throw error;
+        this.hosted.invalidateCachedDirectory(card.dir);
+      }
       file = await safeFile(await this.hosted.directory(id, card.dir), relative);
     }
     let data = await readFile(file);
@@ -1702,7 +1893,21 @@ export async function dispatchGameTool(name: string, args: any, workspace: strin
     case 'set_status':
       if (args.status === 'building') assertSinglePlayerAuthoring((await service.get(args.id)).multiplayer);
       return service.status(args.id,args.status);
-    case 'publish': return service.publish(args.id);
+    case 'publish': {
+      try {
+        return await service.publish(args.id);
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : String(error);
+        if (raw.startsWith('OPENDESIGN_SIGN_IN_REQUIRED') || (error as { code?: unknown })?.code === 'OPENDESIGN_SIGN_IN_REQUIRED') {
+          throw Object.assign(error instanceof Error ? error : new Error(raw), {
+            code: 'OPENDESIGN_SIGN_IN_REQUIRED',
+            applied: false,
+            settingsHandoff: buildMediaSettingsHandoff('agent_game_publish_signed_out'),
+          });
+        }
+        throw error;
+      }
+    }
     case 'wechat': return (await import('./gateway/wechat-minigame.ts')).wechatMinigameFor(workspace).action(args);
     default: throw new GameError('Unknown game tool');
   }
@@ -1723,7 +1928,18 @@ async function optionalJsonInput(req: IncomingMessage, maxBytes: number): Promis
   return text ? JSON.parse(text) : undefined;
 }
 
-export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: URL, workspace: string, input: (req: IncomingMessage, maxBytes?: number) => Promise<any>, runtimeRoot?: string) {
+type GameHttpOptions = {
+  isolatedPreview?: boolean;
+  localPreviewUrl?: (id: string, search?: string) => string;
+};
+
+// Bundled single-player games use game-relative assets. Workspace games can also depend
+// on the Studio asset library, which the isolated static listener does not expose.
+function canUseIsolatedPreview(game: GameCard) {
+  return game.source === 'template' && !game.multiplayer && !game.external;
+}
+
+export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: URL, workspace: string, input: (req: IncomingMessage, maxBytes?: number) => Promise<any>, runtimeRoot?: string, options: GameHttpOptions = {}) {
   const prefix = /^\/(?:api|motion-api)\/games(?=\/|$)/.exec(url.pathname)?.[0];
   if (!prefix) return false;
   const json = (status: number, data: unknown) => { res.writeHead(status, { 'Content-Type':'application/json', 'Cache-Control':'no-store' }); res.end(JSON.stringify(data)); return true; };
@@ -1731,6 +1947,10 @@ export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: U
     const service = gameProjectsFor(workspace, runtimeRoot), parts = url.pathname.slice(prefix.length).split('/').filter(Boolean).map(decodeURIComponent);
     if (!parts.length) { if (req.method === 'GET') return json(200, await service.catalog()); if (req.method === 'POST') return json(201,await createSinglePlayerGame(service, await input(req, LIMIT))); }
     const [id, action, ...rest] = parts;
+    if (action === 'preview-url' && !rest.length && req.method === 'GET') {
+      const localPreviewUrl = options.localPreviewUrl;
+      return json(200, { url: localPreviewUrl && canUseIsolatedPreview(await service.get(id)) ? localPreviewUrl(id) : null });
+    }
     if (parts.length === 1) { if (req.method === 'GET') return json(200,await service.get(id)); if (req.method === 'DELETE') return json(200,await service.delete(id)); }
     if (action === 'trailer' && !rest.length && req.method==='GET')return json(200,await service.trailer(id));
     if (action === 'handoff' && !rest.length && req.method==='GET')return json(200,await service.handoff(id));
@@ -1749,6 +1969,11 @@ export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: U
     }
     if (action === 'play' && req.method === 'GET') {
       const entry=!rest.length||(rest.length===1&&rest[0]==='index.html');
+      if (options.isolatedPreview && !canUseIsolatedPreview(await service.get(id))) return json(404, { error: 'Game preview unavailable' });
+      if (entry && req.headers?.['sec-fetch-dest'] === 'document' && options.localPreviewUrl && canUseIsolatedPreview(await service.get(id))) {
+        res.writeHead(302, { Location: options.localPreviewUrl(id, url.search), 'Cache-Control': 'no-store' }).end();
+        return true;
+      }
       if(entry&&!url.searchParams.has('room')&&(await service.get(id)).multiplayer){
         const target=new URL(url);target.searchParams.set('room',randomUUID().replaceAll('-','').slice(0,8));
         res.writeHead(302,{'Location':target.pathname+target.search,'Cache-Control':'no-store','Access-Control-Allow-Origin':'*'});res.end();return true;
@@ -1759,6 +1984,7 @@ export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: U
         file = await service.staticFile(id,rest.length?rest.join('/'):'index.html');
       } catch (error) {
         if (!studioEntry) throw error;
+        console.error(`[opengame] Failed to load game ${id}:`, error instanceof Error ? error.message : error);
         res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; sandbox allow-scripts" });
         res.end(`<script>parent.postMessage({type:'opengame:startup',state:'failed'}, '*')</script>`);
         return true;
@@ -1793,12 +2019,15 @@ export async function gameHttp(req: IncomingMessage, res: ServerResponse, url: U
       }
       const origin = new URL(url); if (req.headers?.host) origin.host = req.headers.host;
       const encodedId = encodeURIComponent(id);
-      const assetOrigins = `${origin.origin}/api/assets/ ${origin.origin}/motion-api/assets/`;
+      const assetOrigins = options.isolatedPreview ? '' : `${origin.origin}/api/assets/ ${origin.origin}/motion-api/assets/`;
       const playOrigins = `${origin.origin}/api/games/${encodedId}/play/ ${origin.origin}/motion-api/games/${encodedId}/play/`;
-      const sockets = ['/api/games', '/motion-api/games'].map(prefix => `${origin.protocol === 'https:' ? 'wss:' : 'ws:'}//${origin.host}${prefix}/${id}/rooms/`).join(' ');
+      const sockets = options.isolatedPreview ? '' : ['/api/games', '/motion-api/games'].map(prefix => `${origin.protocol === 'https:' ? 'wss:' : 'ws:'}//${origin.host}${prefix}/${id}/rooms/`).join(' ');
       const executable = /^(?:text\/html|image\/svg\+xml)/.test(file.mime);
-      const csp = `sandbox allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals; default-src 'self' data: blob: ${playOrigins} ${assetOrigins}; connect-src 'self' blob: data: ${playOrigins} ${assetOrigins} ${sockets} ${gameCdnOrigins}; script-src 'self' 'unsafe-inline' 'unsafe-eval' ${playOrigins} ${gameCdnOrigins}; style-src 'self' 'unsafe-inline' ${playOrigins}; form-action 'none'; worker-src 'none'`;
-      res.writeHead(200, { 'Access-Control-Allow-Origin':'*', 'Content-Type':file.mime, 'Content-Length':payload.length, 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', ...(executable ? { 'Content-Security-Policy': csp } : {}) }); res.end(payload); return true;
+      const sandbox = options.isolatedPreview ? ' allow-same-origin' : '';
+      const isolation = options.isolatedPreview ? "; object-src 'none'; base-uri 'none'" : '';
+      const csp = `sandbox allow-scripts allow-forms allow-pointer-lock allow-popups allow-modals${sandbox}; default-src 'self' data: blob: ${playOrigins} ${assetOrigins}; connect-src 'self' blob: data: ${playOrigins} ${assetOrigins} ${sockets} ${gameCdnOrigins}; script-src 'self' 'unsafe-inline' 'unsafe-eval' ${playOrigins} ${gameCdnOrigins}; style-src 'self' 'unsafe-inline' ${playOrigins}; form-action 'none'; worker-src 'none'${isolation}`;
+      const originHeaders = options.isolatedPreview ? { 'Origin-Agent-Cluster': '?1', 'Referrer-Policy': 'no-referrer' } : { 'Access-Control-Allow-Origin': '*' };
+      res.writeHead(200, { ...originHeaders, 'Content-Type':file.mime, 'Content-Length':payload.length, 'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff', ...(executable ? { 'Content-Security-Policy': csp } : {}) }); res.end(payload); return true;
     }
     if (parts.length === 2 && req.method === 'POST') {
       if (action === 'capture-cover') return json(200,await service.captureCover(id,await input(req, LIMIT)));

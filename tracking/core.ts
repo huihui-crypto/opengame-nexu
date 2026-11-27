@@ -1,6 +1,6 @@
 import { validHostContext } from './host.ts';
 import type { HostContext } from './host.ts';
-export type Rule = 'project_id' | 'uuid' | 'code' | 'model_id' | 'slug' | 'text' | 'timestamp' | 'boolean' | 'integer' | readonly string[] | { readonly min: number; readonly max: number };
+export type Rule = 'project_id' | 'uuid' | 'code' | 'model_id' | 'slug' | 'text' | 'timestamp' | 'boolean' | 'integer' | readonly string[] | { readonly min: number; readonly max: number; readonly integer?: boolean };
 export type Registry = Record<string, { fields: Record<string, Rule>; required: readonly string[] }>;
 export type Fields = Record<string, string | number | boolean>;
 type RuleValue<R> = R extends readonly string[] ? R[number] : R extends 'boolean' ? boolean : R extends 'integer' | { readonly min: number; readonly max: number } ? number : string;
@@ -27,7 +27,9 @@ export const slug = /^(?=.{1,64}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/;
 export const text = (value: string) => value.length >= 1 && value.length <= 100 && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value);
 export function validField(rule: Rule, value: unknown): value is string | number | boolean {
   if (Array.isArray(rule)) return typeof value === 'string' && rule.includes(value);
-  if (typeof rule === 'object' && 'min' in rule) return typeof value === 'number' && Number.isFinite(value) && value >= rule.min && value <= rule.max;
+  if (typeof rule === 'object' && 'min' in rule) {
+    return typeof value === 'number' && Number.isFinite(value) && (!rule.integer || Number.isSafeInteger(value)) && value >= rule.min && value <= rule.max;
+  }
   if (rule === 'boolean') return typeof value === 'boolean';
   if (rule === 'integer') return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 86_400_000;
   if (rule === 'text') return typeof value === 'string' && text(value);
@@ -48,6 +50,7 @@ export function validProperties(registry: Registry, event: string, raw: unknown)
     return validField(spec.fields[key], value);
   });
 }
+const utf8Encoder = new TextEncoder();
 export function validPending(registry: Registry, value: unknown): value is PendingEvent {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const e = value as PendingEvent;
@@ -62,7 +65,7 @@ export function validPending(registry: Registry, value: unknown): value is Pendi
     if (typeof e.device_timezone !== 'string' || e.device_timezone.length > 64) return false;
     try { new Intl.DateTimeFormat('en', { timeZone: e.device_timezone }); } catch { return false; }
   }
-  return validProperties(registry, e.event, e.properties) && JSON.stringify(e).length <= 4096;
+  return validProperties(registry, e.event, e.properties) && utf8Encoder.encode(JSON.stringify(e)).length <= 4096;
 }
 
 export function createTracker<const R extends Registry>(options: {

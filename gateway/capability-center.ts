@@ -1,8 +1,14 @@
 import { readFile, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { ToolInputError } from '../shared/tool-input-error.ts';
 import type { OmTracking } from '../shared/tracking.ts';
 import type { HostContext } from '../tracking/host.ts';
+import type {
+  MediaGenerationEntrySurface,
+  MediaGenerationMode,
+  MediaGenerationPipelineStep,
+} from '../tracking/tool-fields.ts';
 import type { WorkspaceStore } from '../workspace.ts';
 import { assetMediaUrl, type AssetReference, type AssetVersion, type LibraryAsset } from '../shared/asset-library.ts';
 import { mediaProviders, modelReferenceLimit, type Modality, type Model } from '../shared/gateway.ts';
@@ -30,8 +36,25 @@ import {
   type CapabilityScriptContext,
   type CapabilityScriptHandler,
   type CapabilityScriptOutput,
+  type CapabilityScriptTelemetryMeta,
 } from './capability-scripts.ts';
-import { mediaUse } from './media-use.ts';
+import {
+  classifyRejectionError,
+  createStageTimingTracker,
+  extractRequestReferenceMeta,
+  isMediaTelemetryModality,
+  isScriptPreflightError,
+  recordMediaGenerationRejected,
+  recordMediaGenerationReplayed,
+  recordMediaGenerationRequested,
+  recordMediaGenerationResult,
+  recordMediaGenerationSubmitted,
+  recordPreGatewayRejection,
+  sanitizeScriptTelemetryAttribution,
+  scriptProviderTrackingMeta,
+  spatialKindForCapability,
+} from './media-telemetry.ts';
+import { balanceLowTopupForJob, mediaUse, type McpChannel } from './media-use.ts';
 import { discoverOpenDesign3d, discoverOpenDesignSpatial, discoverOpenDesignWorld, type OpenDesign3dDiscovery } from './opendesign-3d.ts';
 import { gatewayFor } from './service.ts';
 import { transcriptOperation } from './transcript-operations.ts';
@@ -205,12 +228,34 @@ function selectCompatibleModels(
   });
 }
 
+type ScriptTelemetryAttribution = {
+  providerKind?: 'builtin' | 'custom' | 'account' | 'agent';
+  routeChannel?: 'amr_account' | 'amr_opendesign' | 'byok_builtin' | 'byok_agent' | 'byok_custom';
+  modelProvider?: string;
+  modelId?: string;
+  generationMode?: MediaGenerationMode;
+  accountPlan?: 'free' | 'go' | 'plus' | 'pro' | 'team' | 'enterprise' | 'unknown';
+};
+
 type ScriptReceipt = {
   inputHash: string;
   assetId: string;
+  jobId?: string;
+  workerPid?: number;
   status?: 'pending' | 'completed';
   versionId?: string;
+  telemetry?: ScriptTelemetryAttribution;
 };
+
+function isPidAlive(pid?: number): boolean {
+  if (!pid || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 type ScriptExecutionResult = {
   capabilityId: string;
@@ -220,9 +265,10 @@ type ScriptExecutionResult = {
   version: AssetVersion;
   mediaUrl: string;
   result?: Record<string, unknown>;
+  _telemetry?: ScriptTelemetryAttribution;
 };
 
-const inFlightScriptRuns = new Map<string, Promise<ScriptExecutionResult>>();
+const inFlightScriptRuns = new Map<string, { jobId: string; promise: Promise<ScriptExecutionResult> }>();
 
 async function readScriptReceipt(receiptPath: string): Promise<ScriptReceipt | undefined> {
   return readFile(receiptPath, 'utf8').then(
@@ -257,13 +303,15 @@ export async function capabilityDiscover(
   args: any,
   tracking?: OmTracking,
   channel: 'gui' | 'mcp' = 'mcp',
+  host?: HostContext,
+  mcpChannel: McpChannel = 'mcp_stdio',
 ) {
   const inspectModality = args.modality === 'image' || args.modality === 'video' || args.modality === 'audio'
     ? args.modality
     : undefined;
   if (args.action === 'providers') {
-    if (args.provider) return mediaUse(store, { action: 'reference', provider: args.provider }, tracking);
-    return mediaUse(store, { action: 'inspect', ...(inspectModality ? { modality: inspectModality } : {}) }, tracking);
+    if (args.provider) return mediaUse(store, { action: 'reference', provider: args.provider }, tracking, host, { channel, mcpChannel });
+    return mediaUse(store, { action: 'inspect', ...(inspectModality ? { modality: inspectModality } : {}) }, tracking, host, { channel, mcpChannel });
   }
   if (args.action === 'models') {
     if (args.modality === '3d') {
@@ -328,6 +376,8 @@ export async function capabilityDiscover(
         limit: args.limit,
       },
       tracking,
+      host,
+      { channel, mcpChannel },
     );
   }
 
@@ -465,6 +515,8 @@ export async function capabilityDiscover(
       store,
       { action: 'inspect', ...(inspectModality ? { modality: inspectModality } : {}) },
       tracking,
+      host,
+      { channel, mcpChannel },
     )) as {
       providers: unknown;
       defaults: unknown;
@@ -638,556 +690,868 @@ export async function capabilityRun(
   channel: 'gui' | 'mcp' = 'mcp',
   host?: HostContext,
 ) {
-  const action = args.action ?? 'run';
-  if (action !== 'run') throw new ToolInputError('unsupported capability run action', 'action', 'invalid_enum');
-  if (args.dryRun !== true && (typeof args.requestId !== 'string' || !/^[\w-]{1,100}$/.test(args.requestId))) {
-    throw new ToolInputError('requestId is required', 'requestId', 'missing');
-  }
-
   const gateway = gatewayFor(store, tracking);
-  const library = new AssetLibrary(store);
-
-  if (args.capabilityId) {
-    const catalog = await loadCapabilityCatalog(store);
-    const cap = findCapability(args.capabilityId, catalog);
-    if (!cap) throw new Error(`CAPABILITY_NOT_FOUND: Unknown capability ${args.capabilityId}`);
-    if (cap.status === 'coming_soon') {
-      throw new Error(`CAPABILITY_COMING_SOON: ${cap.title} (${cap.id}) is coming soon and cannot be executed yet`);
-    }
-    if (cap.status === 'deprecated' || cap.status === 'hidden') {
-      throw new Error(
-        `CAPABILITY_DEPRECATED: ${cap.id} is no longer active${cap.replacementCapabilityId ? `; use ${cap.replacementCapabilityId} instead` : ''}`,
-      );
-    }
-    if (!cap.channels[channel]) {
-      throw new Error(`CAPABILITY_CHANNEL_DISABLED: ${cap.id} is not enabled on channel ${channel}`);
+  const effectiveTracking = tracking ?? gateway.options.tracking;
+  const entrySurface: MediaGenerationEntrySurface = channel === 'gui' ? 'studio' : 'mcp_capability_run';
+  const isDryRun = args.dryRun === true;
+  let resolvedCap: CapabilityDefinition | undefined;
+  let telemetryOwned = false;
+  try {
+    const action = args.action ?? 'run';
+    if (action !== 'run') throw new ToolInputError('unsupported capability run action', 'action', 'invalid_enum');
+    if (!isDryRun && (typeof args.requestId !== 'string' || !/^[\w-]{1,100}$/.test(args.requestId))) {
+      throw new ToolInputError('requestId is required', 'requestId', 'missing');
     }
 
-    const options = validateCapabilityOptions(cap, args.options);
-    const rawPrompt = typeof args.prompt === 'string' ? args.prompt : '';
-    if (cap.input.promptRequired && !rawPrompt.trim()) {
-      throw new ToolInputError(`prompt is required for capability ${cap.id}`, 'prompt', 'missing');
-    }
+    const library = new AssetLibrary(store);
 
-    const references: AssetReference[] = args.references ?? [];
-    if (cap.executor.kind !== 'service') {
-      if (references.length < cap.input.minReferences || references.length > cap.input.maxReferences) {
-        throw new ToolInputError(
-          `capability ${cap.id} requires ${cap.input.minReferences}..${cap.input.maxReferences} reference assets`,
-          'references',
-          'out_of_range',
+    if (args.capabilityId) {
+      const catalog = await loadCapabilityCatalog(store);
+      const cap = findCapability(args.capabilityId, catalog);
+      resolvedCap = cap;
+      if (!cap) throw new Error(`CAPABILITY_NOT_FOUND: Unknown capability ${args.capabilityId}`);
+      if (cap.status === 'coming_soon') {
+        throw new Error(`CAPABILITY_COMING_SOON: ${cap.title} (${cap.id}) is coming soon and cannot be executed yet`);
+      }
+      if (cap.status === 'deprecated' || cap.status === 'hidden') {
+        throw new Error(
+          `CAPABILITY_DEPRECATED: ${cap.id} is no longer active${cap.replacementCapabilityId ? `; use ${cap.replacementCapabilityId} instead` : ''}`,
         );
       }
-    }
-
-    if (cap.executor.kind === 'script') {
-      const handler = resolveScriptExecutor(cap.executor.scriptId);
-      if (!handler) throw new Error(`CAPABILITY_UNAVAILABLE: Script executor ${cap.executor.scriptId} is not registered`);
-      if (args.dryRun === true) {
-        let selectedModel = `script:${cap.executor.scriptId}`;
-        if (cap.executor.scriptId === 'opendesign-3d' || cap.executor.scriptId === 'opendesign-world') {
-          const requestedModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
-          const colon = requestedModel?.indexOf(':') ?? -1;
-          const requestedProvider = colon > 0 && requestedModel ? requestedModel.slice(0, colon) : undefined;
-          const requestedModelId = colon > 0 && requestedModel ? requestedModel.slice(colon + 1) : requestedModel;
-          const liveSpatial = cap.executor.scriptId === 'opendesign-world'
-            ? await discoverOpenDesignWorld(store, false, requestedProvider)
-            : await discoverOpenDesign3d(store, false, requestedProvider);
-          if (!liveSpatial.available || !liveSpatial.provider) {
-            throw new Error(
-              cap.executor.scriptId === 'opendesign-world'
-                ? 'CAPABILITY_UNAVAILABLE: No active 3D world model is currently exposed on your configured OpenDesign account or Cloud gateway'
-                : 'CAPABILITY_UNAVAILABLE: No active 3D model is currently exposed on your configured OpenDesign account or Cloud gateway',
-            );
-          }
-          const matchedModel = requestedModelId
-            ? liveSpatial.models.find(m => m.modelId === requestedModelId)
-            : liveSpatial.models[0];
-          if (requestedModelId && !matchedModel) {
-            throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedModel} is not available for capability ${cap.id}`);
-          }
-          if (matchedModel) {
-            selectedModel = `${liveSpatial.provider}:${matchedModel.modelId}`;
-          }
-        }
-        const quote = await estimateCapabilityQuote({
-          store,
-          capability: cap,
-          options,
-          parameters: args.parameters ?? {},
-          referenceCount: references.length,
-        });
-        return { dryRun: true, capabilityId: cap.id, executorKind: 'script' as const, selectedModel, quote };
+      if (!cap.channels[channel]) {
+        throw new Error(`CAPABILITY_CHANNEL_DISABLED: ${cap.id} is not enabled on channel ${channel}`);
       }
-      await requireNativeRuntime(pluginRoot, 'media');
-      await library.validateGeneration({
-        assetId: args.assetId,
-        title: args.name,
-        parentVersionId: args.parentVersionId,
-        capabilityId: cap.id,
-        capabilityOptions: Object.keys(options).length ? options : undefined,
-        references,
-        conversationId: args.conversationId,
-      });
-      const normalizedModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
-      const inputHash = assetHash({
-        capabilityId: cap.id,
-        ...(normalizedModel ? { model: normalizedModel } : {}),
-        prompt: rawPrompt,
-        options,
-        parameters: args.parameters ?? {},
-        assetId: args.assetId ?? null,
-        parentVersionId: args.parentVersionId ?? null,
-        references,
-      });
-      const receiptPath = path.join(library.root, 'requests', `${assetHash(`script:${args.requestId}`)}.json`);
-      const workspaceLock = store.workspaceStore ?? store;
-      const reservation = await workspaceLock.lock(async () => {
-        const existingReceipt = await readScriptReceipt(receiptPath);
-        if (existingReceipt) {
-          if (existingReceipt.inputHash !== inputHash) {
-            throw new Error('REQUEST_ID_CONFLICT: requestId was already used with different capability inputs');
+
+      const options = validateCapabilityOptions(cap, args.options);
+      const rawPrompt = typeof args.prompt === 'string' ? args.prompt : '';
+      if (cap.input.promptRequired && !rawPrompt.trim()) {
+        throw new ToolInputError(`prompt is required for capability ${cap.id}`, 'prompt', 'missing');
+      }
+
+      const references: AssetReference[] = args.references ?? [];
+      if (cap.executor.kind !== 'service') {
+        if (references.length < cap.input.minReferences || references.length > cap.input.maxReferences) {
+          throw new ToolInputError(
+            `capability ${cap.id} requires ${cap.input.minReferences}..${cap.input.maxReferences} reference assets`,
+            'references',
+            'out_of_range',
+          );
+        }
+      }
+
+      if (cap.executor.kind === 'script') {
+        const scriptId = cap.executor.scriptId;
+        const handler = resolveScriptExecutor(scriptId);
+        if (!handler) throw new Error(`CAPABILITY_UNAVAILABLE: Script executor ${scriptId} is not registered`);
+        if (isDryRun) {
+          let selectedModel = `script:${scriptId}`;
+          if (scriptId === 'opendesign-3d' || scriptId === 'opendesign-world') {
+            const requestedModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
+            const colon = requestedModel?.indexOf(':') ?? -1;
+            const requestedProvider = colon > 0 && requestedModel ? requestedModel.slice(0, colon) : undefined;
+            const requestedModelId = colon > 0 && requestedModel ? requestedModel.slice(colon + 1) : requestedModel;
+            const liveSpatial = scriptId === 'opendesign-world'
+              ? await discoverOpenDesignWorld(store, false, requestedProvider)
+              : await discoverOpenDesign3d(store, false, requestedProvider);
+            if (!liveSpatial.available || !liveSpatial.provider) {
+              throw new Error(
+                scriptId === 'opendesign-world'
+                  ? 'CAPABILITY_UNAVAILABLE: No active 3D world model is currently exposed on your configured OpenDesign account or Cloud gateway'
+                  : 'CAPABILITY_UNAVAILABLE: No active 3D model is currently exposed on your configured OpenDesign account or Cloud gateway',
+              );
+            }
+            const matchedModel = requestedModelId
+              ? liveSpatial.models.find(m => m.modelId === requestedModelId)
+              : liveSpatial.models[0];
+            if (requestedModelId && !matchedModel) {
+              throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${requestedModel} is not available for capability ${cap.id}`);
+            }
+            if (matchedModel) {
+              selectedModel = `${liveSpatial.provider}:${matchedModel.modelId}`;
+            }
           }
-          const saved = await library.get(existingReceipt.assetId).catch(() => undefined);
-          const priorVersion = saved?.versions.find(v => v.requestId === args.requestId);
-          if (saved && priorVersion) {
-            return {
-              kind: 'replayed' as const,
-              result: {
-                capabilityId: cap.id,
-                executorKind: 'script' as const,
-                costTier: cap.costTier,
-                asset: saved,
-                version: priorVersion,
-                mediaUrl: assetMediaUrl(saved.id, priorVersion.id),
-                ...(priorVersion.result ? { result: priorVersion.result } : {}),
-                replayed: true,
-              },
+          const quote = await estimateCapabilityQuote({
+            store,
+            capability: cap,
+            options,
+            parameters: args.parameters ?? {},
+            referenceCount: references.length,
+          });
+          return { dryRun: true, capabilityId: cap.id, executorKind: 'script' as const, selectedModel, quote };
+        }
+
+        const scriptModality = isMediaTelemetryModality(cap.modality) ? cap.modality : '3d';
+        const spatialKind = spatialKindForCapability(cap.id, scriptId);
+        const telemetryRequestId = randomUUID();
+        const attemptId = randomUUID();
+        const scriptParameters = args.parameters && typeof args.parameters === 'object' && !Array.isArray(args.parameters)
+          ? args.parameters as Record<string, unknown>
+          : {};
+        const isEdit = references.length > 0 || Boolean(args.parentVersionId);
+        const requestCreatedAt = Date.now();
+        let executionStartedAt = requestCreatedAt;
+        let scriptJobId: string = randomUUID();
+        let submittedEmitted = false;
+        let terminalRecorded = false;
+        let scriptMeta: CapabilityScriptTelemetryMeta = { ...(spatialKind ? { spatialKind } : {}) };
+        let sanitizedReplayAttribution: ScriptTelemetryAttribution | undefined;
+        const stages = createStageTimingTracker('precheck');
+        const currentSanitizedAttribution = (): ScriptTelemetryAttribution => {
+          if (sanitizedReplayAttribution) return sanitizedReplayAttribution;
+          const providerMeta = scriptProviderTrackingMeta({
+            provider: scriptMeta.provider,
+            modelId: scriptMeta.modelId,
+            providerOrigin: scriptMeta.providerOrigin,
+            mode: scriptMeta.mode,
+            accountPlan: scriptMeta.accountPlan,
+          });
+          return {
+            ...(providerMeta.provider_kind ? { providerKind: providerMeta.provider_kind } : {}),
+            ...(providerMeta.route_channel ? { routeChannel: providerMeta.route_channel } : {}),
+            ...(providerMeta.model_provider ? { modelProvider: providerMeta.model_provider } : {}),
+            ...(providerMeta.model_id ? { modelId: providerMeta.model_id } : {}),
+            ...(providerMeta.generation_mode ? { generationMode: providerMeta.generation_mode } : {}),
+            ...(providerMeta.account_plan ? { accountPlan: providerMeta.account_plan } : {}),
+          };
+        };
+        const buildCommonInput = () => {
+          const attr = currentSanitizedAttribution();
+          return {
+            modality: scriptModality,
+            executorKind: 'script' as const,
+            capabilityId: cap.id,
+            spatialKind: scriptMeta.spatialKind ?? spatialKind,
+            pipelineStep: stages.pipelineStep ?? scriptMeta.pipelineStep,
+            entrySurface,
+            destination: 'library' as const,
+            referenceCount: references.length,
+            isEdit,
+            providerKind: attr.providerKind,
+            routeChannel: attr.routeChannel,
+            modelProvider: attr.modelProvider,
+            modelId: attr.modelId,
+            generationMode: attr.generationMode,
+            accountPlan: attr.accountPlan,
+            parameters: scriptParameters,
+          };
+        };
+        const emitScriptSubmitted = () => {
+          if (submittedEmitted) return;
+          submittedEmitted = true;
+          recordMediaGenerationSubmitted(effectiveTracking, {
+            ...buildCommonInput(),
+            requestId: telemetryRequestId,
+            jobId: scriptJobId,
+            attemptId,
+            attemptNumber: 1,
+            attemptKind: 'initial',
+            hasIdempotencyKey: true,
+            queueDepth: Math.max(0, inFlightScriptRuns.size - 1),
+          }, host);
+        };
+        const reportStage: NonNullable<CapabilityScriptContext['reportStage']> = (stage, meta) => {
+          if (meta) {
+            scriptMeta = {
+              ...scriptMeta,
+              ...meta,
+              ...(meta.spatialKind ? { spatialKind: meta.spatialKind } : {}),
             };
           }
-          if (existingReceipt.status === 'pending') {
-            const inFlight = inFlightScriptRuns.get(receiptPath);
-            if (inFlight) {
-              return { kind: 'wait' as const, promise: inFlight };
-            }
-          }
-        }
-        const targetAssetId = existingReceipt?.assetId ?? args.assetId ?? crypto.randomUUID();
-        await atomicAssetJson(receiptPath, {
-          inputHash,
-          assetId: targetAssetId,
-          status: 'pending',
-        } satisfies ScriptReceipt);
-        let resolveInFlight!: (value: ScriptExecutionResult) => void;
-        let rejectInFlight!: (reason?: unknown) => void;
-        const gate = new Promise<ScriptExecutionResult>((resolve, reject) => {
-          resolveInFlight = resolve;
-          rejectInFlight = reject;
-        });
-        gate.catch(() => {});
-        inFlightScriptRuns.set(receiptPath, gate);
-        return {
-          kind: 'run' as const,
-          targetAssetId,
-          gate,
-          resolveInFlight,
-          rejectInFlight,
+          emitScriptSubmitted();
+          stages.markStage(stage, {
+            remoteId: meta?.remoteId,
+            remoteTerminal: meta?.remoteTerminal,
+            pipelineStep: meta?.pipelineStep,
+          });
         };
-      });
 
-      if (reservation.kind === 'replayed') return reservation.result;
-      if (reservation.kind === 'wait') {
-        const completed = await reservation.promise;
-        return { ...completed, replayed: true };
-      }
+        telemetryOwned = true;
+        recordMediaGenerationRequested(effectiveTracking, {
+          modality: scriptModality,
+          requestId: telemetryRequestId,
+          executorKind: 'script',
+          capabilityId: cap.id,
+          spatialKind,
+          entrySurface,
+          destination: 'library',
+          referenceCount: references.length,
+          isEdit,
+          hasIdempotencyKey: true,
+        }, host);
 
-      try {
-        const resolvedRefs = await Promise.all(
-          references.map(async ref => {
-            const item = await library.resolve(ref);
-            return { assetId: ref.assetId, versionId: ref.versionId, filename: item.filename };
-          }),
-        );
-        const output = await handler({
-          store,
-          capability: cap,
-          requestId: args.requestId,
-          ...(typeof args.model === 'string' && args.model.trim() ? { model: args.model.trim() } : {}),
+        let reservation:
+          | { kind: 'replayed'; jobId: string; telemetry?: ScriptTelemetryAttribution; result: ScriptExecutionResult & { replayed: true } }
+          | { kind: 'wait'; jobId: string; promise: Promise<ScriptExecutionResult> }
+          | {
+              kind: 'run';
+              jobId: string;
+              targetAssetId: string;
+              gate: Promise<ScriptExecutionResult>;
+              resolveInFlight: (value: ScriptExecutionResult) => void;
+              rejectInFlight: (reason?: unknown) => void;
+            };
+        const normalizedModel = typeof args.model === 'string' && args.model.trim() ? args.model.trim() : undefined;
+        const inputHash = assetHash({
+          capabilityId: cap.id,
+          ...(normalizedModel ? { model: normalizedModel } : {}),
           prompt: rawPrompt,
           options,
-          parameters: args.parameters ?? {},
-          references: resolvedRefs,
+          parameters: scriptParameters,
+          assetId: args.assetId ?? null,
+          parentVersionId: args.parentVersionId ?? null,
+          references,
         });
-        let prepared: Awaited<ReturnType<AssetLibrary['prepare']>> | undefined;
+        const receiptPath = path.join(library.root, 'requests', `${assetHash(`script:${args.requestId}`)}.json`);
+        const workspaceLock = store.workspaceStore ?? store;
+
         try {
-          prepared = await library.prepare(output.sourcePath);
-          const committed = await workspaceLock.lock(async () => {
-            const latestReceipt = await readScriptReceipt(receiptPath);
-            if (latestReceipt && latestReceipt.inputHash !== inputHash) {
-              throw new Error('REQUEST_ID_CONFLICT: requestId was already used with different capability inputs');
-            }
-            if (latestReceipt) {
-              const saved = await library.get(latestReceipt.assetId).catch(() => undefined);
+          await requireNativeRuntime(pluginRoot, 'media');
+          await library.validateGeneration({
+            assetId: args.assetId,
+            title: args.name,
+            parentVersionId: args.parentVersionId,
+            capabilityId: cap.id,
+            capabilityOptions: Object.keys(options).length ? options : undefined,
+            references,
+            conversationId: args.conversationId,
+          });
+          reservation = await workspaceLock.lock(async () => {
+            const existingReceipt = await readScriptReceipt(receiptPath);
+            if (existingReceipt) {
+              if (existingReceipt.inputHash !== inputHash) {
+                throw new Error('REQUEST_ID_CONFLICT: requestId was already used with different capability inputs');
+              }
+              const saved = await library.get(existingReceipt.assetId).catch(() => undefined);
               const priorVersion = saved?.versions.find(v => v.requestId === args.requestId);
               if (saved && priorVersion) {
-                return { asset: saved, version: priorVersion, replayed: true };
+                const replayJobId = existingReceipt.jobId ?? saved.id;
+                return {
+                  kind: 'replayed' as const,
+                  jobId: replayJobId,
+                  telemetry: sanitizeScriptTelemetryAttribution(existingReceipt.telemetry),
+                  result: {
+                    capabilityId: cap.id,
+                    executorKind: 'script' as const,
+                    costTier: cap.costTier,
+                    asset: saved,
+                    version: priorVersion,
+                    mediaUrl: assetMediaUrl(saved.id, priorVersion.id),
+                    ...(priorVersion.result ? { result: priorVersion.result } : {}),
+                    replayed: true as const,
+                  },
+                };
+              }
+              if (existingReceipt.status === 'pending') {
+                const inFlight = inFlightScriptRuns.get(receiptPath);
+                if (inFlight) {
+                  return { kind: 'wait' as const, jobId: existingReceipt.jobId ?? inFlight.jobId, promise: inFlight.promise };
+                }
+                if (existingReceipt.workerPid && existingReceipt.workerPid !== process.pid && isPidAlive(existingReceipt.workerPid)) {
+                  throw new Error('REQUEST_IN_PROGRESS: requestId is already being executed by another active process');
+                }
               }
             }
-            const asset = await library.addLocked(prepared!, {
-              assetId: args.assetId,
-              createId: latestReceipt?.assetId ?? reservation.targetAssetId,
-              name: args.name || output.name || cap.title,
-              expectedModality: cap.modality === '3d' ? undefined : cap.modality,
-              version: {
-                source: 'generated',
-                prompt: rawPrompt || cap.title,
-                model: `script:${cap.executor.kind === 'script' ? cap.executor.scriptId : cap.id}`,
-                parameters: args.parameters ?? {},
-                capabilityId: cap.id,
-                ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
-                references,
-                parentVersionId: args.parentVersionId,
-                requestId: args.requestId,
-                requestHash: inputHash,
-                conversationId: args.conversationId,
-                ...(output.result ? { result: output.result } : {}),
-              },
-            });
-            const version = asset.versions.find(v => v.requestId === args.requestId) ?? asset.versions[asset.versions.length - 1];
+            const targetAssetId = existingReceipt?.assetId ?? args.assetId ?? crypto.randomUUID();
+            // Always mint a fresh jobId for a new run (even when recovering an abandoned pending receipt after a crash).
+            const runJobId = scriptJobId;
             await atomicAssetJson(receiptPath, {
               inputHash,
-              assetId: asset.id,
-              status: 'completed',
-              versionId: version.id,
+              assetId: targetAssetId,
+              jobId: runJobId,
+              workerPid: process.pid,
+              status: 'pending',
             } satisfies ScriptReceipt);
-            return { asset, version, replayed: false };
+            let resolveInFlight!: (value: ScriptExecutionResult) => void;
+            let rejectInFlight!: (reason?: unknown) => void;
+            const gate = new Promise<ScriptExecutionResult>((resolve, reject) => {
+              resolveInFlight = resolve;
+              rejectInFlight = reject;
+            });
+            gate.catch(() => {});
+            inFlightScriptRuns.set(receiptPath, { jobId: runJobId, promise: gate });
+            return {
+              kind: 'run' as const,
+              jobId: runJobId,
+              targetAssetId,
+              gate,
+              resolveInFlight,
+              rejectInFlight,
+            };
           });
-          await output.onCommitted?.().catch(() => {});
-          const result: ScriptExecutionResult = {
-            capabilityId: cap.id,
-            executorKind: 'script',
-            costTier: cap.costTier,
-            asset: committed.asset,
-            version: committed.version,
-            mediaUrl: assetMediaUrl(committed.asset.id, committed.version.id),
-            ...(committed.version.result ? { result: committed.version.result } : {}),
-          };
-          reservation.resolveInFlight(result);
-          return committed.replayed ? { ...result, replayed: true } : result;
-        } finally {
-          if (prepared) await rm(prepared.file, { force: true }).catch(() => {});
-          await output.cleanup?.();
+        } catch (error) {
+          const { reason, category } = classifyRejectionError(error);
+          recordMediaGenerationRejected(effectiveTracking, {
+            ...buildCommonInput(),
+            requestId: telemetryRequestId,
+            hasIdempotencyKey: true,
+            reason,
+            category,
+          }, host);
+          throw error;
         }
-      } catch (error) {
-        await workspaceLock.lock(async () => {
-          const latestReceipt = await readScriptReceipt(receiptPath).catch(() => undefined);
-          if (latestReceipt?.status === 'pending' && latestReceipt.inputHash === inputHash) {
-            const saved = await library.get(latestReceipt.assetId).catch(() => undefined);
-            if (!saved?.versions.some(v => v.requestId === args.requestId)) {
-              await rm(receiptPath, { force: true }).catch(() => {});
+
+        if (reservation.kind === 'replayed') {
+          if (reservation.telemetry) sanitizedReplayAttribution = reservation.telemetry;
+          recordMediaGenerationReplayed(effectiveTracking, {
+            ...buildCommonInput(),
+            requestId: telemetryRequestId,
+            jobId: reservation.jobId,
+            existingJobState: 'completed',
+          }, host);
+          return reservation.result;
+        }
+        if (reservation.kind === 'wait') {
+          try {
+            const completed = await reservation.promise;
+            if (completed._telemetry) sanitizedReplayAttribution = completed._telemetry;
+            recordMediaGenerationReplayed(effectiveTracking, {
+              ...buildCommonInput(),
+              requestId: telemetryRequestId,
+              jobId: reservation.jobId,
+              existingJobState: 'completed',
+            }, host);
+            const { _telemetry: _, ...publicCompleted } = completed;
+            return { ...publicCompleted, replayed: true };
+          } catch (error) {
+            const { reason, category } = classifyRejectionError(error);
+            recordMediaGenerationRejected(effectiveTracking, {
+              ...buildCommonInput(),
+              requestId: telemetryRequestId,
+              hasIdempotencyKey: true,
+              reason,
+              category,
+            }, host);
+            throw error;
+          }
+        }
+
+        scriptJobId = reservation.jobId;
+        try {
+          const resolvedRefs = await Promise.all(
+            references.map(async ref => {
+              const item = await library.resolve(ref);
+              return { assetId: ref.assetId, versionId: ref.versionId, filename: item.filename };
+            }),
+          );
+          executionStartedAt = Date.now();
+          const output = await handler({
+            store,
+            capability: cap,
+            requestId: args.requestId,
+            ...(normalizedModel ? { model: normalizedModel } : {}),
+            prompt: rawPrompt,
+            options,
+            parameters: scriptParameters,
+            references: resolvedRefs,
+            reportStage,
+          });
+          stages.markStage('saving');
+          let prepared: Awaited<ReturnType<AssetLibrary['prepare']>> | undefined;
+          let finalResult: (ScriptExecutionResult & { replayed?: boolean }) | undefined;
+          try {
+            prepared = await library.prepare(output.sourcePath);
+            const committedTelemetry = currentSanitizedAttribution();
+            const committed = await workspaceLock.lock(async () => {
+              const latestReceipt = await readScriptReceipt(receiptPath);
+              if (latestReceipt && latestReceipt.inputHash !== inputHash) {
+                throw new Error('REQUEST_ID_CONFLICT: requestId was already used with different capability inputs');
+              }
+              if (latestReceipt) {
+                const saved = await library.get(latestReceipt.assetId).catch(() => undefined);
+                const priorVersion = saved?.versions.find(v => v.requestId === args.requestId);
+                if (saved && priorVersion) {
+                  return {
+                    asset: saved,
+                    version: priorVersion,
+                    replayed: true,
+                    jobId: latestReceipt.jobId ?? saved.id,
+                    telemetry: sanitizeScriptTelemetryAttribution(latestReceipt.telemetry),
+                  };
+                }
+              }
+              const asset = await library.addLocked(prepared!, {
+                assetId: args.assetId,
+                createId: latestReceipt?.assetId ?? reservation.targetAssetId,
+                name: args.name || output.name || cap.title,
+                expectedModality: cap.modality === '3d' ? undefined : cap.modality,
+                version: {
+                  source: 'generated',
+                  prompt: rawPrompt || cap.title,
+                  model: `script:${cap.executor.kind === 'script' ? cap.executor.scriptId : cap.id}`,
+                  parameters: scriptParameters,
+                  capabilityId: cap.id,
+                  ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
+                  references,
+                  parentVersionId: args.parentVersionId,
+                  requestId: args.requestId,
+                  requestHash: inputHash,
+                  conversationId: args.conversationId,
+                  ...(output.result ? { result: output.result } : {}),
+                },
+              });
+              const version = asset.versions.find(v => v.requestId === args.requestId) ?? asset.versions[asset.versions.length - 1];
+              await atomicAssetJson(receiptPath, {
+                inputHash,
+                assetId: asset.id,
+                jobId: scriptJobId,
+                status: 'completed',
+                versionId: version.id,
+                ...(Object.keys(committedTelemetry).length ? { telemetry: committedTelemetry } : {}),
+              } satisfies ScriptReceipt);
+              return { asset, version, replayed: false, jobId: scriptJobId, telemetry: committedTelemetry };
+            });
+            try {
+              await output.onCommitted?.();
+            } catch {
+              // Best-effort post-commit hook must not fail a committed asset.
+            }
+            const doneAt = Date.now();
+            const finalTimings = stages.finish(doneAt);
+            const outputBytes = typeof output.result?.bytes === 'number' && Number.isFinite(output.result.bytes)
+              ? output.result.bytes
+              : prepared?.bytes;
+            if (committed.replayed && !submittedEmitted) {
+              if (committed.telemetry) sanitizedReplayAttribution = committed.telemetry;
+              terminalRecorded = true;
+              recordMediaGenerationReplayed(effectiveTracking, {
+                ...buildCommonInput(),
+                requestId: telemetryRequestId,
+                jobId: committed.jobId,
+                existingJobState: 'completed',
+              }, host);
+            } else {
+              emitScriptSubmitted();
+              terminalRecorded = true;
+              recordMediaGenerationResult(effectiveTracking, {
+                ...buildCommonInput(),
+                jobId: scriptJobId,
+                requestId: telemetryRequestId,
+                attemptId,
+                attemptNumber: 1,
+                attemptKind: 'initial',
+                jobState: 'completed',
+                assetCount: 1,
+                durationMs: doneAt - executionStartedAt,
+                queueWaitMs: Math.max(0, executionStartedAt - requestCreatedAt),
+                endToEndMs: doneAt - requestCreatedAt,
+                ...finalTimings,
+                hasRemoteId: stages.hasRemoteId || typeof output.result?.taskId === 'string',
+                totalOutputBytes: outputBytes,
+              }, host);
+            }
+            const publicResult: ScriptExecutionResult = {
+              capabilityId: cap.id,
+              executorKind: 'script',
+              costTier: cap.costTier,
+              asset: committed.asset,
+              version: committed.version,
+              mediaUrl: assetMediaUrl(committed.asset.id, committed.version.id),
+              ...(committed.version.result ? { result: committed.version.result } : {}),
+            };
+            reservation.resolveInFlight({ ...publicResult, _telemetry: committed.telemetry });
+            finalResult = committed.replayed ? { ...publicResult, replayed: true } : publicResult;
+          } finally {
+            if (prepared) await rm(prepared.file, { force: true }).catch(() => {});
+            // Best-effort temp cleanup (including sync throws) must never convert a committed asset into a failed call or double-emit telemetry.
+            try {
+              await output.cleanup?.();
+            } catch {
+              // Ignore cleanup failures after commit or error handling.
             }
           }
-        }).catch(() => {});
-        reservation.rejectInFlight(error);
-        throw error;
-      } finally {
-        if (inFlightScriptRuns.get(receiptPath) === reservation.gate) {
-          inFlightScriptRuns.delete(receiptPath);
+          return finalResult;
+        } catch (error) {
+          if (!terminalRecorded) {
+            terminalRecorded = true;
+            if (!submittedEmitted && isScriptPreflightError(error)) {
+              const { reason, category } = classifyRejectionError(error);
+              recordMediaGenerationRejected(effectiveTracking, {
+                ...buildCommonInput(),
+                requestId: telemetryRequestId,
+                hasIdempotencyKey: true,
+                reason,
+                category,
+              }, host);
+            } else {
+              emitScriptSubmitted();
+              const failedAt = Date.now();
+              const finalTimings = stages.finish(failedAt);
+              const failurePhase = stages.activeStage === 'remote_task' || stages.remoteTerminal
+                ? 'remote_task'
+                : stages.activeStage === 'precheck'
+                  ? 'submitting'
+                  : stages.activeStage;
+              recordMediaGenerationResult(effectiveTracking, {
+                ...buildCommonInput(),
+                jobId: scriptJobId,
+                requestId: telemetryRequestId,
+                attemptId,
+                attemptNumber: 1,
+                attemptKind: 'initial',
+                jobState: 'failed',
+                assetCount: 0,
+                durationMs: failedAt - executionStartedAt,
+                queueWaitMs: Math.max(0, executionStartedAt - requestCreatedAt),
+                endToEndMs: failedAt - requestCreatedAt,
+                ...finalTimings,
+                remoteTerminal: stages.remoteTerminal ? true : undefined,
+                hasRemoteId: stages.hasRemoteId,
+                isResumable: false,
+                savePending: false,
+                failurePhase,
+                cause: error,
+              }, host);
+            }
+          }
+          await workspaceLock.lock(async () => {
+            const latestReceipt = await readScriptReceipt(receiptPath).catch(() => undefined);
+            if (latestReceipt?.status === 'pending' && latestReceipt.inputHash === inputHash && latestReceipt.jobId === scriptJobId) {
+              const saved = await library.get(latestReceipt.assetId).catch(() => undefined);
+              if (!saved?.versions.some(v => v.requestId === args.requestId)) {
+                await rm(receiptPath, { force: true }).catch(() => {});
+              }
+            }
+          }).catch(() => {});
+          reservation.rejectInFlight(error);
+          throw error;
+        } finally {
+          if (inFlightScriptRuns.get(receiptPath)?.promise === reservation.gate) {
+            inFlightScriptRuns.delete(receiptPath);
+          }
         }
       }
-    }
 
-    if (cap.executor.kind === 'service' && cap.executor.serviceId === 'asr-transcribe') {
-      let sourcePath = args.sourcePath;
-      if (!sourcePath && references.length === 1) {
-        sourcePath = (await library.resolve(references[0])).filename;
-      }
-      if (!sourcePath) {
-        throw new ToolInputError('sourcePath or 1 audio/video asset reference is required for asr-transcribe', 'sourcePath', 'missing');
-      }
-      if (args.dryRun === true) {
-        if (args.language !== undefined && (typeof args.language !== 'string' || !/^(auto|[a-z]{2,3})$/.test(args.language))) {
-          throw new Error('Choose an ISO language code or auto');
+      if (cap.executor.kind === 'service' && cap.executor.serviceId === 'asr-transcribe') {
+        telemetryOwned = true;
+        let sourcePath = args.sourcePath;
+        if (!sourcePath && references.length === 1) {
+          sourcePath = (await library.resolve(references[0])).filename;
         }
-        const asrCatalog = await transcriptsFor(store).models();
-        const asrModel = asrCatalog.models.find(item => item.id === (args.model ?? asrCatalog.defaultModel));
-        if (!asrModel) {
-          throw new Error('CAPABILITY_UNAVAILABLE: Configure an enabled transcription model in Settings > Model providers');
+        if (!sourcePath) {
+          throw new ToolInputError('sourcePath or 1 audio/video asset reference is required for asr-transcribe', 'sourcePath', 'missing');
         }
-        const quote = await estimateCapabilityQuote({
-          store,
-          capability: cap,
-          options,
-          parameters: args.parameters ?? {},
-          referenceCount: references.length,
+        if (isDryRun) {
+          if (args.language !== undefined && (typeof args.language !== 'string' || !/^(auto|[a-z]{2,3})$/.test(args.language))) {
+            throw new Error('Choose an ISO language code or auto');
+          }
+          const asrCatalog = await transcriptsFor(store).models();
+          const asrModel = asrCatalog.models.find(item => item.id === (args.model ?? asrCatalog.defaultModel));
+          if (!asrModel) {
+            throw new Error('CAPABILITY_UNAVAILABLE: Configure an enabled transcription model in Settings > Model providers');
+          }
+          const quote = await estimateCapabilityQuote({
+            store,
+            capability: cap,
+            options,
+            parameters: args.parameters ?? {},
+            referenceCount: references.length,
+          });
+          return {
+            dryRun: true,
+            capabilityId: cap.id,
+            executorKind: 'service' as const,
+            selectedModel: asrModel.id,
+            quote: { ...quote, selectedModel: quote.selectedModel ?? asrModel.id },
+          };
+        }
+        const submitted = await transcriptOperation(store, {
+          command: 'submit',
+          projectId: args.projectId ?? 'project',
+          sourcePath,
+          requestId: args.requestId,
+          model: args.model,
+          language: args.language,
+          parameters: args.parameters,
         });
+        return {
+          capabilityId: cap.id,
+          executorKind: 'service' as const,
+          costTier: cap.costTier,
+          ...submitted,
+        };
+      }
+
+      if (cap.modality === '3d') {
+        throw new Error(`CAPABILITY_UNAVAILABLE: No 3D executor is configured for ${cap.id}`);
+      }
+
+      const [status, models] = await Promise.all([gateway.status(), gateway.models()]);
+      const availableProviders = new Set(
+        status.providers
+          .filter(p => p.available && !(p.id === 'account' && p.mediaEntitlement === 'not-included'))
+          .map(p => p.id),
+      );
+      const compatible = selectCompatibleModels(cap, models, availableProviders, references.length);
+      let chosen: Model | undefined;
+      if (args.model) {
+        chosen = compatible.find(m => m.id === args.model)
+          ?? (typeof args.model === 'string' && !args.model.includes(':')
+            ? compatible.find(m => m.modelId === args.model)
+            : undefined);
+        if (!chosen) {
+          const catalogModel = models.find(m => m.id === args.model);
+          if (catalogModel && capabilitySupportsModel(cap, catalogModel)) {
+            if (!availableProviders.has(catalogModel.provider)) {
+              throw new Error(`CAPABILITY_UNAVAILABLE: Provider ${catalogModel.provider} is not ready for model ${args.model}`);
+            }
+            if (references.length >= 1 && (catalogModel.modality === 'image' || catalogModel.modality === 'video') && modelReferenceLimit(catalogModel) < references.length) {
+              throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} accepts at most ${modelReferenceLimit(catalogModel)} reference image(s)`);
+            }
+          }
+          throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} does not support capability ${cap.id}`);
+        }
+      } else {
+        const routeId = status.routes[cap.modality];
+        chosen = (cap.executor.kind === 'model' ? compatible.find(m => m.id === routeId) : undefined) ?? compatible[0];
+      }
+      if (!chosen) {
+        throw new Error(`CAPABILITY_UNAVAILABLE: No configured provider/model is ready for capability ${cap.id}`);
+      }
+
+      if (args.mode !== undefined) {
+        if (!['text-to-image', 'text-to-video', 'text-to-audio', 'text-to-speech'].includes(args.mode)) {
+          throw new ToolInputError('Unsupported generation mode', 'mode', 'invalid_enum');
+        }
+        if (args.mode !== `text-to-${cap.modality}` && !(cap.modality === 'audio' && args.mode === 'text-to-speech')) {
+          throw new ToolInputError('Generation mode does not match modality', 'mode', 'invalid_enum');
+        }
+      }
+      const executorMode =
+        cap.executor.kind === 'model' || cap.executor.kind === 'prompt-preset' || cap.executor.kind === 'dedicated-model'
+          ? cap.executor.mode
+          : undefined;
+      const requestedMode = args.mode ?? executorMode;
+      if (['account', 'opendesign'].includes(chosen.provider) && requestedMode && requestedMode !== chosen.mode) {
+        throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Generation mode ${requestedMode} does not match the selected ${chosen.provider === 'account' ? 'account' : 'Cloud'} model`);
+      }
+      const resolvedModel: Model = requestedMode ? { ...chosen, mode: requestedMode } : chosen;
+
+      const videoPresetParams: Record<string, unknown> =
+        cap.id === 'camera-control' || cap.id === 'multi-shot'
+          ? videoFeatureParameters(cap.id as VideoFeatureId, resolvedModel)
+          : {};
+      if (cap.executor.kind === 'prompt-preset' && cap.executor.forceAudio) {
+        const audioField = (resolvedModel.generationOptions ?? generationOptions(resolvedModel))?.fields.find(
+          field => field.key === 'generate_audio' || field.key === 'audio',
+        );
+        videoPresetParams[audioField?.key ?? 'generate_audio'] = true;
+      }
+      const mergedParameters = buildCapabilityParameters(cap, options, { ...videoPresetParams, ...(args.parameters ?? {}) });
+      const resolvedParameters = resolveGenerationParameters(resolvedModel, mergedParameters, references.length > 0);
+      validateGenerationOptions(resolvedModel, resolvedParameters, references.length > 0);
+      if (resolvedModel.provider === 'opendesign' && references.length > 0 && resolvedParameters.images !== undefined) {
+        throw new Error('Choose pinned references or parameters.images for Cloud input');
+      }
+      const effectivePrompt =
+        cap.executor.kind === 'dedicated-model'
+          ? rawPrompt.trim() || cap.title
+          : buildCapabilityPrompt(cap.id, rawPrompt, options, catalog);
+
+      const quote = await estimateCapabilityQuote({
+        store,
+        capability: cap,
+        model: resolvedModel,
+        options,
+        parameters: resolvedParameters,
+        referenceCount: references.length,
+      });
+      if (isDryRun) {
         return {
           dryRun: true,
           capabilityId: cap.id,
-          executorKind: 'service' as const,
-          selectedModel: asrModel.id,
-          quote: { ...quote, selectedModel: quote.selectedModel ?? asrModel.id },
+          executorKind: cap.executor.kind,
+          selectedModel: resolvedModel.id,
+          mode: resolvedModel.mode,
+          effectiveParameters: resolvedParameters,
+          quote,
         };
       }
-      const submitted = await transcriptOperation(store, {
-        command: 'submit',
-        projectId: args.projectId ?? 'project',
-        sourcePath,
-        requestId: args.requestId,
-        model: args.model,
-        language: args.language,
-        parameters: args.parameters,
-      });
+
+      await requireNativeRuntime(pluginRoot, 'media');
+      telemetryOwned = true;
+      const job = await gateway.submit({
+        modality: cap.modality,
+        prompt: effectivePrompt,
+        model: resolvedModel.id,
+        mode: requestedMode ?? resolvedModel.mode,
+        idempotencyKey: args.requestId,
+        parameters: mergedParameters,
+        capabilityId: cap.id,
+        ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
+        library: {
+          assetId: args.assetId,
+          title: args.name,
+          parentVersionId: args.parentVersionId,
+          capabilityId: cap.id,
+          ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
+          references,
+          conversationId: args.conversationId,
+        },
+      }, host, { entrySurface });
       return {
         capabilityId: cap.id,
-        executorKind: 'service' as const,
+        executorKind: cap.executor.kind,
+        selectedModel: job.model.id,
         costTier: cap.costTier,
-        ...submitted,
+        quote,
+        job,
+        next: { tool: 'openmotion_job_manage', action: 'status', jobId: job.id },
       };
     }
 
-    if (cap.modality === '3d') {
-      throw new Error(`CAPABILITY_UNAVAILABLE: No 3D executor is configured for ${cap.id}`);
+    // Raw model fallback when no dedicated capabilityId is specified
+    if (!args.model) throw new ToolInputError('capabilityId or model is required', 'capabilityId', 'missing');
+    if (args.modality !== 'image' && args.modality !== 'video' && args.modality !== 'audio') {
+      throw new ToolInputError('modality must be image, video, or audio when calling by raw model', 'modality', args.modality ? 'invalid_enum' : 'missing');
     }
-
-    const [status, models] = await Promise.all([gateway.status(), gateway.models()]);
-    const availableProviders = new Set(
-      status.providers
-        .filter(p => p.available && !(p.id === 'account' && p.mediaEntitlement === 'not-included'))
-        .map(p => p.id),
-    );
-    const compatible = selectCompatibleModels(cap, models, availableProviders, references.length);
-    let chosen: Model | undefined;
-    if (args.model) {
-      chosen = compatible.find(m => m.id === args.model)
-        ?? (typeof args.model === 'string' && !args.model.includes(':')
-          ? compatible.find(m => m.modelId === args.model)
-          : undefined);
-      if (!chosen) {
-        const catalogModel = models.find(m => m.id === args.model);
-        if (catalogModel && capabilitySupportsModel(cap, catalogModel)) {
-          if (!availableProviders.has(catalogModel.provider)) {
-            throw new Error(`CAPABILITY_UNAVAILABLE: Provider ${catalogModel.provider} is not ready for model ${args.model}`);
-          }
-          if (references.length >= 1 && (catalogModel.modality === 'image' || catalogModel.modality === 'video') && modelReferenceLimit(catalogModel) < references.length) {
-            throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} accepts at most ${modelReferenceLimit(catalogModel)} reference image(s)`);
-          }
-        }
-        throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} does not support capability ${cap.id}`);
-      }
-    } else {
-      const routeId = status.routes[cap.modality];
-      chosen = (cap.executor.kind === 'model' ? compatible.find(m => m.id === routeId) : undefined) ?? compatible[0];
+    const rawModality = args.modality as Modality;
+    if (typeof args.prompt !== 'string' || !args.prompt.trim()) {
+      throw new ToolInputError('prompt is required when calling by raw model', 'prompt', 'missing');
     }
-    if (!chosen) {
-      throw new Error(`CAPABILITY_UNAVAILABLE: No configured provider/model is ready for capability ${cap.id}`);
-    }
-
     if (args.mode !== undefined) {
       if (!['text-to-image', 'text-to-video', 'text-to-audio', 'text-to-speech'].includes(args.mode)) {
         throw new ToolInputError('Unsupported generation mode', 'mode', 'invalid_enum');
       }
-      if (args.mode !== `text-to-${cap.modality}` && !(cap.modality === 'audio' && args.mode === 'text-to-speech')) {
+      if (args.mode !== `text-to-${rawModality}` && !(rawModality === 'audio' && args.mode === 'text-to-speech')) {
         throw new ToolInputError('Generation mode does not match modality', 'mode', 'invalid_enum');
       }
     }
-    const executorMode =
-      cap.executor.kind === 'model' || cap.executor.kind === 'prompt-preset' || cap.executor.kind === 'dedicated-model'
-        ? cap.executor.mode
-        : undefined;
-    const requestedMode = args.mode ?? executorMode;
-    if (['account', 'opendesign'].includes(chosen.provider) && requestedMode && requestedMode !== chosen.mode) {
-      throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Generation mode ${requestedMode} does not match the selected ${chosen.provider === 'account' ? 'account' : 'Cloud'} model`);
-    }
-    const resolvedModel: Model = requestedMode ? { ...chosen, mode: requestedMode } : chosen;
-
-    const videoPresetParams: Record<string, unknown> =
-      cap.id === 'camera-control' || cap.id === 'multi-shot'
-        ? videoFeatureParameters(cap.id as VideoFeatureId, resolvedModel)
-        : {};
-    if (cap.executor.kind === 'prompt-preset' && cap.executor.forceAudio) {
-      const audioField = (resolvedModel.generationOptions ?? generationOptions(resolvedModel))?.fields.find(
-        field => field.key === 'generate_audio' || field.key === 'audio',
+    if (isDryRun) {
+      const [status, models] = await Promise.all([gateway.status(), gateway.models()]);
+      const availableProviders = new Set(
+        status.providers
+          .filter(p => p.available && !(p.id === 'account' && p.mediaEntitlement === 'not-included'))
+          .map(p => p.id),
       );
-      videoPresetParams[audioField?.key ?? 'generate_audio'] = true;
-    }
-    const mergedParameters = buildCapabilityParameters(cap, options, { ...videoPresetParams, ...(args.parameters ?? {}) });
-    const resolvedParameters = resolveGenerationParameters(resolvedModel, mergedParameters, references.length > 0);
-    validateGenerationOptions(resolvedModel, resolvedParameters, references.length > 0);
-    if (resolvedModel.provider === 'opendesign' && references.length > 0 && resolvedParameters.images !== undefined) {
-      throw new Error('Choose pinned references or parameters.images for Cloud input');
-    }
-    const effectivePrompt =
-      cap.executor.kind === 'dedicated-model'
-        ? rawPrompt.trim() || cap.title
-        : buildCapabilityPrompt(cap.id, rawPrompt, options, catalog);
-
-    const quote = await estimateCapabilityQuote({
-      store,
-      capability: cap,
-      model: resolvedModel,
-      options,
-      parameters: resolvedParameters,
-      referenceCount: references.length,
-    });
-    if (args.dryRun === true) {
+      let chosen = models.find(m => m.id === args.model && m.modality === rawModality);
+      if (!chosen && models.some(m => m.id === args.model)) {
+        throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} does not match modality ${rawModality}`);
+      }
+      if (!chosen && typeof args.model === 'string') {
+        const colon = args.model.indexOf(':');
+        const provider = colon > 0 ? mediaProviders.find(id => id === args.model.slice(0, colon)) : undefined;
+        const modelId = colon > 0 ? args.model.slice(colon + 1) : '';
+        if (provider && /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,140}$/.test(modelId)) {
+          chosen = {
+            id: args.model,
+            provider,
+            modelId,
+            label: modelId,
+            modality: rawModality,
+            mode: args.mode ?? `text-to-${rawModality}`,
+            source: 'custom',
+          };
+        }
+      }
+      if (!chosen || !availableProviders.has(chosen.provider)) {
+        throw new Error(`CAPABILITY_UNAVAILABLE: Selected model ${args.model} is unavailable; configure an available provider or choose a different model`);
+      }
+      if (['account', 'opendesign'].includes(chosen.provider) && args.mode && args.mode !== chosen.mode) {
+        throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Generation mode ${args.mode} does not match the selected ${chosen.provider === 'account' ? 'account' : 'Cloud'} model`);
+      }
+      const resolvedModel: Model = args.mode ? { ...chosen, mode: args.mode } : chosen;
+      const rawRefs: AssetReference[] = Array.isArray(args.references) ? args.references : [];
+      const rawParams = args.parameters && typeof args.parameters === 'object' && !Array.isArray(args.parameters)
+        ? args.parameters as Record<string, unknown>
+        : {};
+      const resolvedParameters = resolveGenerationParameters(resolvedModel, rawParams, rawRefs.length > 0);
+      validateGenerationOptions(resolvedModel, resolvedParameters, rawRefs.length > 0);
+      const referenceLimit = modelReferenceLimit(resolvedModel);
+      if (rawRefs.length && resolvedModel.provider === 'opendesign' && resolvedModel.modality === 'image' && resolvedModel.supportsImageReference === undefined) {
+        throw new Error('Image editing capability is unknown. Sync Cloud models before using references.');
+      }
+      if (rawRefs.length && !referenceLimit) {
+        throw new Error(rawModality === 'video'
+          ? 'This video model does not accept an input image. Choose a video model with maxInputImages, or remove the reference.'
+          : 'This model does not support asset references. Choose an image model that supports editing, or remove the reference.');
+      }
+      if (rawRefs.length > referenceLimit) {
+        throw new Error(`This model accepts at most ${referenceLimit} input image${referenceLimit === 1 ? '' : 's'}`);
+      }
+      if (resolvedModel.provider === 'opendesign' && rawRefs.length && resolvedParameters.images !== undefined) {
+        throw new Error('Choose pinned references or parameters.images for Cloud input');
+      }
+      const quote = await estimateCapabilityQuote({
+        store,
+        modality: rawModality,
+        model: resolvedModel,
+        options: {},
+        parameters: resolvedParameters,
+        referenceCount: rawRefs.length,
+      });
       return {
         dryRun: true,
-        capabilityId: cap.id,
-        executorKind: cap.executor.kind,
+        executorKind: 'model' as const,
         selectedModel: resolvedModel.id,
+        modality: rawModality,
         mode: resolvedModel.mode,
         effectiveParameters: resolvedParameters,
         quote,
       };
     }
-
     await requireNativeRuntime(pluginRoot, 'media');
+    telemetryOwned = true;
     const job = await gateway.submit({
-      modality: cap.modality,
-      prompt: effectivePrompt,
-      model: resolvedModel.id,
-      mode: requestedMode ?? resolvedModel.mode,
+      modality: rawModality,
+      prompt: args.prompt,
+      model: args.model,
+      mode: args.mode,
       idempotencyKey: args.requestId,
-      parameters: mergedParameters,
-      capabilityId: cap.id,
-      ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
+      parameters: args.parameters,
       library: {
         assetId: args.assetId,
         title: args.name,
         parentVersionId: args.parentVersionId,
-        capabilityId: cap.id,
-        ...(Object.keys(options).length ? { capabilityOptions: options } : {}),
-        references,
+        references: args.references,
         conversationId: args.conversationId,
       },
-    }, host);
+    }, host, { entrySurface });
     return {
-      capabilityId: cap.id,
-      executorKind: cap.executor.kind,
+      executorKind: 'model' as const,
       selectedModel: job.model.id,
-      costTier: cap.costTier,
-      quote,
       job,
       next: { tool: 'openmotion_job_manage', action: 'status', jobId: job.id },
     };
-  }
-
-  // Raw model fallback when no dedicated capabilityId is specified
-  if (!args.model) throw new ToolInputError('capabilityId or model is required', 'capabilityId', 'missing');
-  if (args.modality !== 'image' && args.modality !== 'video' && args.modality !== 'audio') {
-    throw new ToolInputError('modality must be image, video, or audio when calling by raw model', 'modality', args.modality ? 'invalid_enum' : 'missing');
-  }
-  const rawModality = args.modality as Modality;
-  if (typeof args.prompt !== 'string' || !args.prompt.trim()) {
-    throw new ToolInputError('prompt is required when calling by raw model', 'prompt', 'missing');
-  }
-  if (args.mode !== undefined) {
-    if (!['text-to-image', 'text-to-video', 'text-to-audio', 'text-to-speech'].includes(args.mode)) {
-      throw new ToolInputError('Unsupported generation mode', 'mode', 'invalid_enum');
-    }
-    if (args.mode !== `text-to-${rawModality}` && !(rawModality === 'audio' && args.mode === 'text-to-speech')) {
-      throw new ToolInputError('Generation mode does not match modality', 'mode', 'invalid_enum');
-    }
-  }
-  if (args.dryRun === true) {
-    const [status, models] = await Promise.all([gateway.status(), gateway.models()]);
-    const availableProviders = new Set(
-      status.providers
-        .filter(p => p.available && !(p.id === 'account' && p.mediaEntitlement === 'not-included'))
-        .map(p => p.id),
-    );
-    let chosen = models.find(m => m.id === args.model && m.modality === rawModality);
-    if (!chosen && models.some(m => m.id === args.model)) {
-      throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Model ${args.model} does not match modality ${rawModality}`);
-    }
-    if (!chosen && typeof args.model === 'string') {
-      const colon = args.model.indexOf(':');
-      const provider = colon > 0 ? mediaProviders.find(id => id === args.model.slice(0, colon)) : undefined;
-      const modelId = colon > 0 ? args.model.slice(colon + 1) : '';
-      if (provider && /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,140}$/.test(modelId)) {
-        chosen = {
-          id: args.model,
-          provider,
-          modelId,
-          label: modelId,
-          modality: rawModality,
-          mode: args.mode ?? `text-to-${rawModality}`,
-          source: 'custom',
-        };
+  } catch (error) {
+    if (!isDryRun && !telemetryOwned) {
+      const cap = resolvedCap ?? (typeof args.capabilityId === 'string' ? findCapability(args.capabilityId) : undefined);
+      if (cap?.executor.kind !== 'service') {
+        const resolvedModality = isMediaTelemetryModality(cap?.modality)
+          ? cap.modality
+          : isMediaTelemetryModality(args.modality) ? args.modality : undefined;
+        if (resolvedModality) {
+          const { reason, category } = classifyRejectionError(error);
+          const { referenceCount, isEdit } = extractRequestReferenceMeta(args);
+          recordPreGatewayRejection(effectiveTracking, {
+            modality: resolvedModality,
+            executorKind: cap?.executor.kind === 'script' ? 'script' : 'gateway',
+            capabilityId: typeof args.capabilityId === 'string' ? args.capabilityId : undefined,
+            spatialKind: spatialKindForCapability(cap?.id),
+            entrySurface,
+            destination: 'library',
+            referenceCount,
+            isEdit,
+            hasIdempotencyKey: typeof args.requestId === 'string' && args.requestId.length > 0,
+            parameters: args.parameters && typeof args.parameters === 'object' && !Array.isArray(args.parameters) ? args.parameters : undefined,
+            reason,
+            category,
+          }, host);
+        }
       }
     }
-    if (!chosen || !availableProviders.has(chosen.provider)) {
-      throw new Error(`CAPABILITY_UNAVAILABLE: Selected model ${args.model} is unavailable; configure an available provider or choose a different model`);
-    }
-    if (['account', 'opendesign'].includes(chosen.provider) && args.mode && args.mode !== chosen.mode) {
-      throw new Error(`CAPABILITY_MODEL_INCOMPATIBLE: Generation mode ${args.mode} does not match the selected ${chosen.provider === 'account' ? 'account' : 'Cloud'} model`);
-    }
-    const resolvedModel: Model = args.mode ? { ...chosen, mode: args.mode } : chosen;
-    const rawRefs: AssetReference[] = Array.isArray(args.references) ? args.references : [];
-    const rawParams = args.parameters && typeof args.parameters === 'object' && !Array.isArray(args.parameters)
-      ? args.parameters as Record<string, unknown>
-      : {};
-    const resolvedParameters = resolveGenerationParameters(resolvedModel, rawParams, rawRefs.length > 0);
-    validateGenerationOptions(resolvedModel, resolvedParameters, rawRefs.length > 0);
-    const referenceLimit = modelReferenceLimit(resolvedModel);
-    if (rawRefs.length && resolvedModel.provider === 'opendesign' && resolvedModel.modality === 'image' && resolvedModel.supportsImageReference === undefined) {
-      throw new Error('Image editing capability is unknown. Sync Cloud models before using references.');
-    }
-    if (rawRefs.length && !referenceLimit) {
-      throw new Error(rawModality === 'video'
-        ? 'This video model does not accept an input image. Choose a video model with maxInputImages, or remove the reference.'
-        : 'This model does not support asset references. Choose an image model that supports editing, or remove the reference.');
-    }
-    if (rawRefs.length > referenceLimit) {
-      throw new Error(`This model accepts at most ${referenceLimit} input image${referenceLimit === 1 ? '' : 's'}`);
-    }
-    if (resolvedModel.provider === 'opendesign' && rawRefs.length && resolvedParameters.images !== undefined) {
-      throw new Error('Choose pinned references or parameters.images for Cloud input');
-    }
-    const quote = await estimateCapabilityQuote({
-      store,
-      modality: rawModality,
-      model: resolvedModel,
-      options: {},
-      parameters: resolvedParameters,
-      referenceCount: rawRefs.length,
-    });
-    return {
-      dryRun: true,
-      executorKind: 'model' as const,
-      selectedModel: resolvedModel.id,
-      modality: rawModality,
-      mode: resolvedModel.mode,
-      effectiveParameters: resolvedParameters,
-      quote,
-    };
+    throw error;
   }
-  await requireNativeRuntime(pluginRoot, 'media');
-  const job = await gateway.submit({
-    modality: rawModality,
-    prompt: args.prompt,
-    model: args.model,
-    mode: args.mode,
-    idempotencyKey: args.requestId,
-    parameters: args.parameters,
-    library: {
-      assetId: args.assetId,
-      title: args.name,
-      parentVersionId: args.parentVersionId,
-      references: args.references,
-      conversationId: args.conversationId,
-    },
-  }, host);
-  return {
-    executorKind: 'model' as const,
-    selectedModel: job.model.id,
-    job,
-    next: { tool: 'openmotion_job_manage', action: 'status', jobId: job.id },
-  };
 }
 
-export async function jobManage(store: WorkspaceStore, args: any, tracking?: OmTracking) {
+export async function jobManage(
+  store: WorkspaceStore,
+  args: any,
+  tracking?: OmTracking,
+  channel: 'gui' | 'mcp' = 'mcp',
+  host?: HostContext,
+  mcpChannel: McpChannel = 'mcp_stdio',
+  emitUpgradeLinkResult = true,
+) {
   const gateway = gatewayFor(store, tracking);
   if (args.action === 'list') {
     const cap = typeof args.limit === 'number' ? Math.max(1, Math.min(100, args.limit)) : 100;
@@ -1202,12 +1566,23 @@ export async function jobManage(store: WorkspaceStore, args: any, tracking?: OmT
       throw new Error('GENERATION_NOT_FOUND: job does not belong to this project');
     }
     if ((args.action === 'retry_save' || args.action === 'resume') && !args.requestId) {
-      throw new ToolInputError('requestId is required', 'requestId', 'missing');
+      const err = new ToolInputError('requestId is required', 'requestId', 'missing');
+      gateway.recordRetryRejection(job, args.action, err);
+      throw err;
     }
     if (args.action === 'resume') return { job: await gateway.resume(job.id, args.requestId) };
     if (args.action === 'retry_save') return { job: await gateway.retrySave(job.id) };
-    if (args.action === 'cancel') return { job: await gateway.cancel(job.id) };
-    return { job };
+    if (args.action === 'cancel') return { job: await gateway.cancel(job.id, { source: 'mcp' }) };
+    const topupFields = await balanceLowTopupForJob(gateway, job, {
+      channel,
+      mcpChannel,
+      studioId: job.projectId ? 'motion' : 'assets',
+      directory: (store.workspaceStore ?? store).directory,
+      tracking,
+      host,
+      emitUpgradeLinkResult,
+    });
+    return { job, ...topupFields };
   }
   throw new ToolInputError('unsupported job manage action', 'action', 'invalid_enum');
 }

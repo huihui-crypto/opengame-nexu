@@ -55,6 +55,7 @@ export type McpPhase1Invoker = (payload: {
   arguments: any;
   trackingHost: HostContext;
   trackingContext?: string;
+  channel?: 'mcp_stdio' | 'mcp_http';
 }) => Promise<any>;
 
 function sha256Hex(value: string): string {

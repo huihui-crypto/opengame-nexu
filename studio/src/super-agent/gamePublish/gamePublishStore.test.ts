@@ -294,13 +294,38 @@ describe('gamePublishStore', () => {
     expect(gamePublishSessionFor(input.artifactId)?.stepIndex).toBe(1);
   });
 
-  it.each(['douyin-minigame', 'qq'] as const)('keeps %s as a manual port and does not fabricate an export', async id => {
+  it('sends Douyin AppID and upload guidance to the existing chat while the OpenDesign link publishes', async () => {
+    gamePublishActions.open(input);
+    gamePublishActions.choose(input.artifactId, 'douyin-minigame');
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(gamePublishSessionFor(input.artifactId)).toMatchObject({
+      platformId: 'douyin-minigame', view: 'step', stepIndex: 0, toolCheck: undefined, linkToo: true, linkPublishing: true,
+    });
+    const target = { existingChatId: input.chatId, mode: 'game', newChat: false, autoSend: true };
+    expect(handoff).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      ...target, hiddenInstructions: expect.stringContaining('Get a Mini Game AppID'),
+    }));
+    expect(handoff.mock.calls[0][0].hiddenInstructions).not.toContain('kept OpenDesign selected');
+
+    gamePublishActions.completeStep(input.artifactId);
+    expect(gamePublishSessionFor(input.artifactId)?.stepIndex).toBe(1);
+    expect(handoff).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      ...target, hiddenInstructions: expect.stringContaining('Create the project in Douyin DevTools and upload'),
+    }));
+    expect(gamePublishPlatform('douyin-minigame')!.steps[1].links).toContainEqual(expect.objectContaining({
+      href: expect.stringContaining('/developer-instrument-update-and-download'),
+    }));
+    await settle();
+    expect(handoff).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps QQ as a manual port with a developer tool check', async () => {
     gamePublishActions.open(input);
     gamePublishActions.setLinkToo(input.artifactId, false);
-    gamePublishActions.choose(input.artifactId, id);
+    gamePublishActions.choose(input.artifactId, 'qq');
     expect(gamePublishSessionFor(input.artifactId)?.toolCheck?.state).toBe('missing');
     gamePublishActions.confirmDevTool(input.artifactId);
-    for (let step = 0; step < gamePublishPlatform(id)!.steps.length; step++) gamePublishActions.completeStep(input.artifactId);
+    for (let step = 0; step < gamePublishPlatform('qq')!.steps.length; step++) gamePublishActions.completeStep(input.artifactId);
     await settle();
     expect(gamePublishSessionFor(input.artifactId)).toMatchObject({ view: 'result', package: undefined });
     expect(publish).not.toHaveBeenCalled();
@@ -331,6 +356,24 @@ describe('gamePublishStore', () => {
     gamePublishActions.close(input.artifactId);
     gamePublishActions.reopen(input.artifactId);
     expect(gamePublishSessionFor(input.artifactId)).toMatchObject({ open: true, view: 'step', platformId: 'douyin' });
+  });
+
+  it('completes Douyin in the panel alone after opening the same game without its previous chat', async () => {
+    publish.mockRejectedValueOnce(new Error('OpenDesign unavailable'));
+    gamePublishActions.open(input);
+    gamePublishActions.close(input.artifactId);
+    gamePublishActions.open({ ...input, chatId: null });
+    gamePublishActions.choose(input.artifactId, 'douyin-minigame');
+    expect(gamePublishSessionFor(input.artifactId)).toMatchObject({ open: true, chatId: null, view: 'step', stepIndex: 0, linkPublishing: true });
+    await settle();
+    expect(gamePublishSessionFor(input.artifactId)).toMatchObject({ view: 'step', stepIndex: 0, linkError: { message: 'OpenDesign unavailable' } });
+    gamePublishActions.completeStep(input.artifactId);
+    expect(gamePublishSessionFor(input.artifactId)?.stepIndex).toBe(1);
+    gamePublishActions.completeStep(input.artifactId);
+    expect(gamePublishSessionFor(input.artifactId)?.stepIndex).toBe(2);
+    gamePublishActions.completeStep(input.artifactId);
+    expect(gamePublishSessionFor(input.artifactId)).toMatchObject({ view: 'result', package: undefined, published: ['douyin-minigame'] });
+    expect(handoff).not.toHaveBeenCalled();
   });
 
   it('guest choosing a non-Telegram platform skips OpenDesign link publish and builds package cleanly', async () => {

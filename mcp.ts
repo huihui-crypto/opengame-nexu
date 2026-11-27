@@ -20,6 +20,7 @@ import { resolveProviderSetupEntry } from './shared/workspace-url.ts';
 import type { Selection } from './editor-runtime.ts';
 import { createAppTracking, closeTracking, type OmTracking } from './shared/tracking.ts';
 import { extractCodexThreadMeta, flushCodexSessionTracking, isCompletedExportToolResult, recordCodexThreadActivity, syncActiveCodexThreads } from './shared/codex-session-tracking.ts';
+import { extractHostSessionMeta, flushHostSessionTracking, recordHostSessionActivity, syncActiveHostSessions } from './shared/host-session-tracking.ts';
 import { uuid } from './tracking/core.ts';
 import { mcpToolNames } from './tracking/events.ts';
 import { gameResultStatusIsLifecycle, gameToolFields, toolFailureFields, toolInputFields, toolResultFields } from './tracking/tool-fields.ts';
@@ -66,7 +67,7 @@ export type McpRpcOptions = {
   previewOrigin?: string;
   stateless?: boolean;
   authorizeToolCall?: (tool: { name: string; annotations?: { readOnlyHint?: boolean } }, args: unknown) => void;
-  callPhase1?: (payload: { name: string; arguments: any; trackingHost: HostContext; trackingContext?: string }) => Promise<any>;
+  callPhase1?: (payload: { name: string; arguments: any; trackingHost: HostContext; trackingContext?: string; channel?: 'mcp_stdio' | 'mcp_http' }) => Promise<any>;
   autoUpdate?: (context: { repoRoot: string; dataDirectory: string; restartBackend: boolean }) => Promise<SourceUpdateCheckResult | SourceUpdateApplyResult>;
 };
 
@@ -75,7 +76,7 @@ export async function rpc(message: any, store = new WorkspaceStore(), registry =
     connectionHosts.set(connection ?? store, identifyHost(message.params?.clientInfo, process.env));
   }
   const declared = message?.params?._meta?.['io.modelcontextprotocol/clientInfo'];
-  const host = declared ? identifyHost(declared) : connectionHosts.get(connection ?? store) ?? unknownHost;
+  const host = declared ? identifyHost(declared, process.env) : connectionHosts.get(connection ?? store) ?? unknownHost;
   let contexts = connectionContexts.get(connection ?? store);
   if (!contexts) { contexts = new Map(); connectionContexts.set(connection ?? store, contexts); }
   const hostKey = JSON.stringify(host);
@@ -85,20 +86,29 @@ export async function rpc(message: any, store = new WorkspaceStore(), registry =
   }
   const trackingContext = contexts.get(hostKey)!;
   const name = legacyToolName(message?.params?.name);
+  const isInternalProbe = message?.params?._meta?.['openmotion/internalProbe'] === true;
+  if (isInternalProbe) {
+    return invokeRpc(message, store, registry, connection, host, trackingContext, clientState, options);
+  }
   const codexMeta = message?.jsonrpc === '2.0' && message.id !== undefined
     && (message.method === 'tools/call' || message.method === 'resources/read')
     ? extractCodexThreadMeta(message.params, host) : null;
+  const hostSessionMeta = !codexMeta && message?.jsonrpc === '2.0' && message.id !== undefined
+    && (message.method === 'tools/call' || message.method === 'resources/read')
+    ? extractHostSessionMeta(message.params, host, process.env) : null;
   if (message?.jsonrpc !== '2.0' || message.id === undefined || message.method !== 'tools/call'
     || registry.profile !== 'phase1' || !(mcpToolNames as readonly unknown[]).includes(name)) {
     const response = await invokeRpc(message, store, registry, connection, host, trackingContext, clientState, options);
-    if (codexMeta && !(response as any)?.error) {
+    if ((codexMeta || hostSessionMeta) && !(response as any)?.error) {
       const resultValue = (response as any)?.result;
       const content = resultValue?.structuredContent;
-      void recordCodexThreadActivity(store.directory, codexMeta, {
+      const activityOpts = {
         projectId: content?.projectId ?? message.params?.arguments?.projectId,
         resourceUri: message.method === 'resources/read' ? message.params?.uri : undefined,
         exportCompleted: message.method === 'tools/call' && isCompletedExportToolResult(name, message.params?.arguments, content, resultValue?.isError),
-      }).catch(() => {});
+      };
+      if (codexMeta) void recordCodexThreadActivity(store.directory, codexMeta, activityOpts).catch(() => {});
+      if (hostSessionMeta) void recordHostSessionActivity(store.directory, hostSessionMeta, activityOpts).catch(() => {});
     }
     return response;
   }
@@ -119,24 +129,37 @@ export async function rpc(message: any, store = new WorkspaceStore(), registry =
   const response = await invokeRpc(message, store, registry, connection, host, trackingContext, clientState, options);
   const value = (response as any)?.result;
   const content = value?.structuredContent;
-  if (codexMeta) {
-    void recordCodexThreadActivity(store.directory, codexMeta, {
+  if (codexMeta || hostSessionMeta) {
+    const activityOpts = {
       projectId: content?.projectId ?? args?.projectId,
       exportCompleted: isCompletedExportToolResult(name, args, content, value?.isError),
-    }).catch(() => {});
+    };
+    if (codexMeta) void recordCodexThreadActivity(store.directory, codexMeta, activityOpts).catch(() => {});
+    if (hostSessionMeta) void recordHostSessionActivity(store.directory, hostSessionMeta, activityOpts).catch(() => {});
   }
   if (name === 'motion_open_preview' && value && !value.isError && message.params?.arguments?.target === 'providers') {
+    const entry_from = resolveProviderSetupEntry(message.params.arguments.entry);
+    const studio_id = entry_from === 'agent_game_publish_signed_out'
+      ? 'game'
+      : entry_from === 'agent_design_deploy_signed_out'
+        ? 'design'
+        : undefined;
     tracking.track('provider_setup_opened', {
-      entry_from: resolveProviderSetupEntry(message.params.arguments.entry),
+      entry_from,
       presentation: message.params.arguments.presentation ?? 'foreground',
       embedded: message.params.arguments.embedded !== false,
+      ...(studio_id ? { studio_id } : {}),
     }, undefined, undefined, host);
   }
-  // Any discovery route (media_use inspect, capability_discover providers/list) may carry the internal link result:
-  // strip it before the agent sees it and record the link generation once.
+  // Any discovery or status route may carry the internal link result:
+  // strip it before the agent sees it and record the link generation once for both stdio and HTTP MCP.
+  const mcpChannel = options?.transport === 'http' ? 'mcp_http' : 'mcp_stdio';
   if (value && !value.isError && content?._upgradeLinkResult) {
     const { _upgradeLinkResult, ...visible } = content;
-    if (options?.transport !== 'http') tracking.track('upgrade_link_result', _upgradeLinkResult, undefined, undefined, host);
+    tracking.track('upgrade_link_result', {
+      ..._upgradeLinkResult,
+      channel: _upgradeLinkResult.channel ?? mcpChannel,
+    }, undefined, undefined, host);
     value.structuredContent = visible;
     value.content = [{ type: 'text', text: JSON.stringify(visible) }];
   }
@@ -281,17 +304,18 @@ async function invokeRpc(message: any, store: WorkspaceStore, registry: ReturnTy
             }
           }
         }
+        const mcpChannel: 'mcp_stdio' | 'mcp_http' = options?.transport === 'http' ? 'mcp_http' : 'mcp_stdio';
         let raw: any;
         let responseOk = true;
         let previewOrigin = options?.previewOrigin;
         if (options?.callPhase1) {
-          raw = await options.callPhase1({ name: transportName, arguments: transportArgs, trackingHost: host, trackingContext });
+          raw = await options.callPhase1({ name: transportName, arguments: transportArgs, trackingHost: host, trackingContext, channel: mcpChannel });
         } else {
           const service = await ensureService(store, undefined, transportName), origin = new URL(service.previewUrl).origin;
           previewOrigin ??= resolvePublicOrigin(origin);
           const response = await fetch(origin + '/motion-api/phase1/call', { method: 'POST', headers: await editorHeaders(store, origin),
             body: JSON.stringify({ name: phase1TransportTool(service, transportName) ?? transportName, arguments: transportArgs,
-              trackingHost: host, trackingContext }), signal: AbortSignal.timeout(600_000) });
+              trackingHost: host, trackingContext, channel: mcpChannel }), signal: AbortSignal.timeout(600_000) });
           raw = await response.json();
           responseOk = response.ok;
         }
@@ -299,7 +323,9 @@ async function invokeRpc(message: any, store: WorkspaceStore, registry: ReturnTy
         const resultValue = publicToolResult(normalized?.structuredContent ?? raw);
         const value = responseOk && transportName.startsWith('openmotion_game_') ? withPlayableUrl(resultValue, previewOrigin) : resultValue;
         if (!responseOk) throw Object.assign(new Error(value.error || 'Tool failed'), {
-          code: value.code, details: value.runtime, invalid_field: value.invalid_field, validation_rule: value.validation_rule, ...(value.applied === false ? { applied: false } : {}),
+          code: value.code, details: value.runtime, invalid_field: value.invalid_field, validation_rule: value.validation_rule,
+          ...(value.settingsHandoff ? { settingsHandoff: value.settingsHandoff } : {}),
+          ...(value.applied === false ? { applied: false } : {}),
         });
         if (finalVideo && (!value.inlineWork?.playable || value.inlineWork.state !== 'completed' || !normalized?._meta?.inlineVideo?.video))
           throw new Error('FINAL_VIDEO_NOT_READY: Display only after the MP4 export completes and passes verification');
@@ -340,10 +366,14 @@ async function invokeRpc(message: any, store: WorkspaceStore, registry: ReturnTy
       const code = (error as any).code || /^([A-Z][A-Z_]+):?/.exec(errorMessage)?.[1] || 'TOOL_FAILED';
       const { invalid_field, validation_rule } = toolFailureFields(error);
       const runtimeFailure = ['MCP_RUNTIME_RELOAD_REQUIRED', 'EDITOR_RUNTIME_INCOMPATIBLE', 'NATIVE_RUNTIME_NOT_READY'].includes(code);
-      return result({ isError: true, content: [{ type: 'text', text: errorMessage }], structuredContent: { error: { code, message: errorMessage,
-        ...(invalid_field ? { invalid_field, validation_rule } : {}),
-        ...(runtimeFailure && (error as any).details ? { details: (error as any).details } : {}),
-        applied: (error as any).applied === false || runtimeFailure || /^(NATIVE_RUNTIME_NOT_READY|INVALID_|VERSION_CONFLICT|VERSION_NOT_RESTORABLE|VERSION_NOT_FOUND|PROJECT_NOT_|PROJECT_SESSION_|PROJECT_TRASHED|PROJECT_VALIDATION_FAILED|REQUEST_ID_CONFLICT|SESSION_NOT_FOUND|MCP_TOOL_NOT_EXPOSED|EXPORT_NOT_|TEMPLATE_NOT_|WORK_CLOSED|WORK_VERSION_MISMATCH|WORK_GENERATION_UNTRACKED|WORK_ID_CONFLICT|WORK_NOT_FOUND|GENERATION_CONTENT_UNCHANGED|GENERATION_ARTIFACT_INVALID|DUPLICATE_ITEM_ID|ITEM_ID_CONFLICT|DUPLICATE_FILE_PATH|CONFLICTING_FILE_PATHS|SOURCE_BATCH_TOO_LARGE|REVIEW_VERSION_MISMATCH|REVIEW_OBJECT_MISMATCH|PREVIEW_TARGET_MISMATCH)/.test(code) ? false : 'unknown' } } });
+      const settingsHandoff = (error as { settingsHandoff?: unknown })?.settingsHandoff;
+      return result({ isError: true, content: [{ type: 'text', text: errorMessage }], structuredContent: {
+        ...(settingsHandoff ? { settingsHandoff } : {}),
+        error: { code, message: errorMessage,
+          ...(invalid_field ? { invalid_field, validation_rule } : {}),
+          ...(settingsHandoff ? { settingsHandoff } : {}),
+          ...(runtimeFailure && (error as any).details ? { details: (error as any).details } : {}),
+          applied: (error as any).applied === false || runtimeFailure || /^(OPENDESIGN_SIGN_IN_REQUIRED|NATIVE_RUNTIME_NOT_READY|INVALID_|VERSION_CONFLICT|VERSION_NOT_RESTORABLE|VERSION_NOT_FOUND|PROJECT_NOT_|PROJECT_SESSION_|PROJECT_TRASHED|PROJECT_VALIDATION_FAILED|REQUEST_ID_CONFLICT|SESSION_NOT_FOUND|MCP_TOOL_NOT_EXPOSED|EXPORT_NOT_|TEMPLATE_NOT_|WORK_CLOSED|WORK_VERSION_MISMATCH|WORK_GENERATION_UNTRACKED|WORK_ID_CONFLICT|WORK_NOT_FOUND|GENERATION_CONTENT_UNCHANGED|GENERATION_ARTIFACT_INVALID|DUPLICATE_ITEM_ID|ITEM_ID_CONFLICT|DUPLICATE_FILE_PATH|CONFLICTING_FILE_PATHS|SOURCE_BATCH_TOO_LARGE|REVIEW_VERSION_MISMATCH|REVIEW_OBJECT_MISMATCH|PREVIEW_TARGET_MISMATCH)/.test(code) ? false : 'unknown' } } });
     }
   }
   return { jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Method not found' } };
@@ -352,6 +382,7 @@ if (isMain(import.meta.url)) {
   const store = new WorkspaceStore();
   if ((await trackingFor(store)).enabled()) process.stderr.write('OpenMotion collects redacted usage information to improve product and generation quality. Disable in Studio Privacy & data settings or set OPENMOTION_TELEMETRY=0.\n');
   void syncActiveCodexThreads(store.directory).catch(() => {});
+  void syncActiveHostSessions(store.directory).catch(() => {});
   const connection = sharedEditorEnabled ? { selection: {} } : undefined;
   const clientState = createMcpClientState();
   const modernTransport: Transport = {
@@ -382,5 +413,9 @@ if (isMain(import.meta.url)) {
     if (response) process.stdout.write(JSON.stringify(response) + '\n');
   }
   await modern?.close();
-  await Promise.allSettled([closeTracking(await trackingByStore.get(store)), flushCodexSessionTracking(store.directory)]);
+  await Promise.allSettled([
+    closeTracking(await trackingByStore.get(store)),
+    flushCodexSessionTracking(store.directory),
+    flushHostSessionTracking(store.directory),
+  ]);
 }

@@ -2,14 +2,13 @@ import { Button } from 'open-design-ui/button';
 import { useToast } from '../hooks/useToast';
 import { StudioToastViewport } from '../components/StudioToastViewport';
 import { AccountStatus, useAccountSignIn } from './AccountSettings';
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { MultimodalOfferCard, MultimodalUpgradeCard } from './MultimodalOfferCard';
 import { useI18n } from '../i18n/I18n';
 import type { StudioDestination } from './creativeStudios';
+import { captureCurrentPlan, refreshEntitlementAfterCheckout } from './entitlementAttribution';
 import { destinationTarget, reportCreativeClick } from './exploreTracking';
 import { reportOfferClick, type OfferKind, type OfferVisit } from './offerTracking';
-import { gatewayRequest } from './gatewayClient';
-import { notifyProvidersChanged } from './useProviderDirectory';
 import { useSubscriptionOpener } from './useSubscriptionOpener';
 import { RemixIcon } from '../icons/RemixIcons';
 import styles from './GenerationOffer.module.css';
@@ -37,16 +36,26 @@ function generationOfferCopy({ scene }: StudioDestination, kind: OfferKind) {
 
 export function GenerationUpgradeNotice({ destination, onError, onUpgrade, visit }: { visit?: OfferVisit; destination: StudioDestination; onError: (message: string) => void; onUpgrade: () => void }) {
   const { t } = useI18n();
+  const prevPlanRef = useRef<Promise<string | undefined> | undefined>(undefined);
   const subscription = useSubscriptionOpener(
-    element => {
-      reportCreativeClick('creative_studio', 'asset_create', element, destinationTarget(destination));
+    (element, attribution) => {
+      reportCreativeClick('creative_studio', 'asset_create', element, destinationTarget(destination), attribution);
     },
     onError,
-    () => { void gatewayRequest('settings/account?refresh=true').then(notifyProvidersChanged).catch((error: Error) => onError(error.message)); },
+    checkout => {
+      void refreshEntitlementAfterCheckout('creative_studio', checkout.hookId, checkout.entryId, prevPlanRef.current, onError, checkout);
+    },
   );
+  const trackedSubscription = {
+    ...subscription,
+    openSubscription: (...args: Parameters<typeof subscription.openSubscription>) => {
+      prevPlanRef.current = captureCurrentPlan();
+      return subscription.openSubscription(...args);
+    },
+  };
   const { title, details } = generationOfferCopy(destination, 'upgrade');
   return <MultimodalUpgradeCard
-    subscription={subscription}
+    subscription={trackedSubscription}
     visit={visit}
     model={destination.model ?? undefined}
     onUpgrade={onUpgrade}
@@ -59,7 +68,7 @@ export function GenerationUpgradeNotice({ destination, onError, onUpgrade, visit
 
 export function GenerationSignInNotice({ destination, onSignIn, visit }: { visit?: OfferVisit; destination: StudioDestination; onSignIn: () => void }) {
   const { t } = useI18n(), toast = useToast();
-  const { state, busy, action } = useAccountSignIn(destination, toast.showToast);
+  const { state, busy, action, trackBrowserSignIn } = useAccountSignIn(destination, toast.showToast);
   const retry = !state.account && state.error;
   const { title, details } = generationOfferCopy(destination, 'sign_in');
   const signInCard = (onClick: () => void) => <MultimodalOfferCard kind="sign_in" visit={state.account ? visit : undefined} title={t(title)} details={t(details)}>
@@ -69,7 +78,7 @@ export function GenerationSignInNotice({ destination, onSignIn, visit }: { visit
     </Button>
   </MultimodalOfferCard>;
   return <>
-    {state.account ? <AccountStatus account={state.account} busy={busy} showToast={toast.showToast} renderSignIn={() => signInCard(() => {
+    {state.account ? <AccountStatus account={state.account} busy={busy} showToast={toast.showToast} onOpenBrowserSignIn={trackBrowserSignIn} renderSignIn={() => signInCard(() => {
         onSignIn();
         void action('login', visit && reportOfferClick(visit, 'sign_in', destination.model));
       })}

@@ -15,6 +15,7 @@ import { webAddress } from '../shared/browser.ts';
 import { designRoutes, isDesignScenario } from '../shared/design-project.ts';
 import { localAgents, type AgentDefinition } from '../shared/local-agents.ts';
 import type { OmTracking } from '../shared/tracking.ts';
+import { recordSuperAgentTurnTrace } from '../shared/super-agent-session-tracking.ts';
 import { modelId, slug } from '../tracking/core.ts';
 import { superAgentError } from '../tracking/tool-fields.ts';
 
@@ -235,7 +236,7 @@ You have access to every capability across OpenMotion:
      * NO custom modifications requested (e.g. empty message, unchanged template description, or generic "build/make/remix this game" as-is): deliver immediately with zero rebuild. Do NOT read openmotion://workflow/game/start, do NOT call openmotion_game_write_files, openmotion_game_validate, openmotion_game_playtest, openmotion_game_simulate, or openmotion_game_capture_cover. Silently call openmotion_game_set_status(id=..., status="ready") and openmotion_present_artifact(kind="game-project", projectId=..., title=...) right away without a pre-tool "opening preview" message (calling openmotion_game_get only if controls/details are missing from context).
      * Custom modifications requested: read openmotion://workflow/game/start, inspect the copied project files with openmotion_game_get(id=...) and openmotion_game_read_file(id=..., path=...), and edit the existing files in place rather than rewriting from scratch, then follow the normal build/verify/deliver steps below.
      * Reply voice (BOTH paths): always open your final reply in the user's language as the builder who just coded and finished this game for them (e.g. "《<title>》已为你制作完成……" / "I've built <title> for you — ..."), summarize gameplay highlights, any customized features, and real controls, and invite them to play or customize next — never open with passive "opened the preview" / "updated" phrasing, never say you copied a template, returned existing source files, used internal skills, or skipped building/testing, and never fabricate checks you did not run.
-   - Otherwise, when the user asks to build, remix, update, validate, playtest, or publish a Game Studio game (or passes a Game Studio game id), read openmotion://workflow/game/start (via openmotion_read_workflow(workflow="game", section="start") or MCP resource) and inspect the draft/project with openmotion_game_get(id=...). Always load openmotion-game reference sections (especially section="animation" on any 3D brief before asset planning, plus section="gates", "audio", "flow", "style", etc.) through openmotion_read_workflow(workflow="game", section=...) — NEVER shell-read cached skill files under ~/.codex/plugins/cache/ or other local plugin caches, which may be stale.
+   - Otherwise, when the user asks to build, remix, update, validate, playtest, or publish a Game Studio game (or passes a Game Studio game id), read openmotion://workflow/game/start (via openmotion_read_workflow(workflow="game", section="start") or MCP resource) and inspect the draft/project with openmotion_game_get(id=...). Always load needed openmotion-game reference sections (especially section="animation" on any 3D brief before asset planning, plus section="gates", "audio", "flow", "style", "review" as applicable) completely through openmotion_read_workflow(workflow="game", section=...) without slicing or bundling them into a single truncated output — NEVER shell-read cached skill files under ~/.codex/plugins/cache/ or other local plugin caches, which may be stale.
    - Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
    - Proceed directly when the single-player brief already provides the game idea and relevant options.
    - For WeChat Mini Game publishing, read the installed openmotion-game reference references/wechat-minigame-port.md and call openmotion_game_wechat(id, action="status") first. Guide one current step at a time in this conversation. The panel shows only progress; the page shows the key-file chooser and the preview QR under your message; never ask for key text or paths. Ask for upload authorization with version/description. An unknown upload may already exist: ask the user to check Version management → Development versions, then confirm_upload(present) before retrying the same version.
@@ -282,7 +283,7 @@ Use the registered OpenMotion MCP tools (mcp__openmotion__*) and injected <openm
      * NO custom modifications requested (e.g. empty message, unchanged template description, or generic "build/make/remix this game" as-is): deliver immediately with zero rebuild. Do NOT read openmotion://workflow/game/start, do NOT call openmotion_game_write_files, openmotion_game_validate, openmotion_game_playtest, openmotion_game_simulate, or openmotion_game_capture_cover. Silently call openmotion_game_set_status(id=..., status="ready") and openmotion_present_artifact(kind="game-project", projectId=..., title=...) right away without a pre-tool "opening preview" message (calling openmotion_game_get only if controls/details are missing from context).
      * Custom modifications requested: read openmotion://workflow/game/start, inspect the copied project files with openmotion_game_get(id=...) and openmotion_game_read_file(id=..., path=...), and edit the existing files in place rather than rewriting from scratch, then follow the build/verify/deliver steps below.
      * Reply voice (BOTH paths): always open your final reply in the user's language as the builder who just coded and finished this game for them (e.g. "《<title>》已为你制作完成……" / "I've built <title> for you — ..."), summarize gameplay highlights, any customized features, and real controls, and invite them to play or customize next — never open with passive "opened the preview" / "updated" phrasing, never say you copied a template, returned existing source files, used internal skills, or skipped building/testing, and never fabricate checks you did not run.
-   - Otherwise, for Game Studio projects, call openmotion_read_workflow(workflow="game", section="start") (and section="animation" on any 3D brief before asset planning — always load workflow references via openmotion_read_workflow, NEVER by shell-reading stale local plugin cache files under ~/.codex/plugins/cache/) and inspect with openmotion_game_get(id=...). Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
+   - Otherwise, for Game Studio projects, call openmotion_read_workflow(workflow="game", section="start") (and section="animation" on any 3D brief before asset planning — read each needed section completely without slicing or bundling into truncated output, and NEVER shell-read stale local plugin cache files under ~/.codex/plugins/cache/) and inspect with openmotion_game_get(id=...). Create and remix single-player games only. When the user explicitly requests multiplayer, explain that game generation currently supports single-player and ask before adapting the brief. Existing multiplayer projects may be inspected, playtested or opened for local play.
    - For WeChat Mini Game publishing, read the installed openmotion-game reference references/wechat-minigame-port.md and call openmotion_game_wechat(id, action="status") first. Guide one current step at a time in this conversation. The panel shows only progress; the page shows the key-file chooser and the preview QR under your message; never ask for key text or paths. Ask for upload authorization with version/description. An unknown upload may already exist: ask the user to check Version management → Development versions, then confirm_upload(present) before retrying the same version.
    - When building or editing a single-player game whose brief already specifies the concept or options, proceed directly: call openmotion_game_set_status(id, "building"), write files via openmotion_game_write_files, update metadata (openmotion_game_update_meta), capture cover (openmotion_game_capture_cover), validate (openmotion_game_validate), simulate and playtest, set status="ready" (or call openmotion_game_publish when appropriate), and open via openmotion_present_artifact(kind="game-project", projectId=...). Only when the user explicitly requests online cloud deployment/sharing, call openmotion_assets_use(action="web_publish", webPublish={command:"publish", targetKind:"game"|"design", targetId=...}) (or openmotion_design_project(action="deploy", projectId=...) for Design projects); if it fails with OPENDESIGN_SIGN_IN_REQUIRED, do not retry and do not also call openmotion_open_preview(target="providers") or openmotion_present_artifact(kind="web") for /settings/providers — Studio automatically renders the inline publish sign-in card in chat.
    - For playable ads, follow the playable-ad recipe (first-frame play with hand tutorial, rich short-level progression, win/fail end cards with CTA; visuals may stay lightweight while using the standard OpenMotion runtime and assets). ${gameAssetInstructions}
@@ -1374,7 +1375,7 @@ export class SuperAgentConversations {
     return chat;
   }
 
-  async list(): Promise<SuperAgentChatSummary[]> {
+  async list(gameId?: string): Promise<SuperAgentChatSummary[]> {
     const dir = path.join(this.root, 'chats');
     const names = await readdir(dir).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return [];
@@ -1385,6 +1386,21 @@ export class SuperAgentConversations {
         .filter(name => name.endsWith('.json') && isSuperAgentId(name.slice(0, -5)))
         .map(name => this.readChat(name.slice(0, -5), false)),
     );
+    if (gameId) {
+      return chats.flatMap(chat => {
+        const artifact = chat.artifacts.find(item => item.kind === 'game-project' && item.projectId === gameId);
+        if (!artifact) return [];
+        // Starting a game attaches it to the first prompt. Simply previewing it can add an artifact later.
+        const beganWithGame = Boolean(chat.messages.find(message => message.role === 'user')
+          ?.attachments?.some(item => item.kind === 'game-project' && item.id === gameId));
+        return [{ chat, beganWithGame, linkedAt: artifact.createdAt }];
+      }).sort((a, b) =>
+        Number(b.beganWithGame) - Number(a.beganWithGame)
+        || a.linkedAt - b.linkedAt
+        || a.chat.createdAt - b.chat.createdAt
+        || a.chat.id.localeCompare(b.chat.id),
+      ).slice(0, 200).map(({ chat }) => summarizeSuperAgentChat(chat));
+    }
     return chats
       .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt - a.updatedAt)
       .slice(0, 200)
@@ -5042,6 +5058,7 @@ export class SuperAgentConversations {
     this.syncProjectDir(active.chat);
     let turnToolCallCount = 0;
     let turnChangedFileCount = 0;
+    let capturedTurnMessages: SuperAgentMessage[] = [];
     if (!active.deleted && active.turnUserMessageId) {
       const postRoots = collectTaskProjectRoots(this.store.directory, active.chat, {
         gameIds: active.touchedGameIds,
@@ -5054,6 +5071,7 @@ export class SuperAgentConversations {
       const turnMessages = turnStartIdx >= 0
         ? active.chat.messages.slice(turnStartIdx + 1)
         : active.chat.messages;
+      capturedTurnMessages = turnMessages;
       turnToolCallCount = turnMessages.filter(m => m.role === 'tool').length;
       const toolFiles = collectToolChangedFiles(turnMessages);
       const merged = mergeTurnChangedFiles(snapshotFiles, toolFiles);
@@ -5090,8 +5108,9 @@ export class SuperAgentConversations {
     const safeInt = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.min(86_400_000, Math.round(n)) : undefined;
     const inputTokens = safeInt(turnUsage?.inputTokens);
     const outputTokens = safeInt(turnUsage?.outputTokens);
+    const runtimeKind = superAgentRuntimeKind(active.runtimeId ?? active.chat.runtimeId);
     this.options.tracking?.track('super_agent_turn_result', {
-      runtime_kind: superAgentRuntimeKind(active.runtimeId ?? active.chat.runtimeId),
+      runtime_kind: runtimeKind,
       engine: safeEngine,
       ...(safeModelId ? { model_id: safeModelId } : {}),
       permission_mode: active.chat.permissionMode === 'auto' ? 'auto' : 'on-request',
@@ -5106,6 +5125,29 @@ export class SuperAgentConversations {
       ...(outputTokens !== undefined ? { output_tokens: outputTokens } : {}),
       ...(turnOutcome !== 'completed' ? { error_code: superAgentError(error, turnOutcome === 'cancelled') } : {}),
     }, undefined, 'worker');
+    if (!active.deleted && active.turnUserMessageId) {
+      const touchedProjectIds = [
+        ...(active.touchedMotionIds ?? []),
+        ...(active.touchedDesignIds ?? []),
+      ];
+      void recordSuperAgentTurnTrace(this.store.directory, {
+        chat: active.chat,
+        turnUserMessageId: active.turnUserMessageId,
+        turnMessages: capturedTurnMessages,
+        runtimeKind,
+        safeEngine,
+        safeIntent,
+        effectiveModel: active.effectiveModel,
+        outcome: turnOutcome,
+        startedAt: active.turnStartedAt,
+        finishedAt,
+        durationMs: active.chat.lastTurnDurationMs ?? 0,
+        usage: turnUsage,
+        error,
+        touchedProjectIds,
+        touchedGameIds: [...(active.touchedGameIds ?? [])],
+      }).catch(() => {});
+    }
     if (!error && !active.chat.titleCustomized) {
       const firstUserText =
         active.chat.messages.find(m => m.role === 'user' && !isGenericSuperAgentTitle(generateSuperAgentTitle({ prompt: m.text })))?.text
