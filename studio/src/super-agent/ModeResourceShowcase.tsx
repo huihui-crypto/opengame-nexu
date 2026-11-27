@@ -35,12 +35,12 @@ import {
   localizedGameTitle,
   toGameResourceAttachment,
 } from '../motion/game/gameSuperAgent';
-import aaaAdventureArt from '../motion/game/hero-art/aaa-adventure.webp';
-import aaaCityArt from '../motion/game/hero-art/aaa-gta.webp';
-import aaaMythArt from '../motion/game/hero-art/aaa-wukong.webp';
-import indieOriArt from '../motion/game/hero-art/indie-ori.webp';
-import indieSeaOfStarsArt from '../motion/game/hero-art/indie-seaofstars.webp';
-import indieSilksongArt from '../motion/game/hero-art/indie-silksong.webp';
+import aaaCityArt from '../motion/game/hero-art/aaa-city.webp';
+import aaaFantasyArt from '../motion/game/hero-art/aaa-fantasy.webp';
+import aaaHorrorArt from '../motion/game/hero-art/aaa-horror.webp';
+import aaaMythArt from '../motion/game/hero-art/aaa-myth.webp';
+import aaaSpyArt from '../motion/game/hero-art/aaa-spy.webp';
+import aaaWuxiaArt from '../motion/game/hero-art/aaa-wuxia.webp';
 import moneyBallMatchArt from '../motion/game/hero-art/money-ball-match.webp';
 import moneyBlockBlastArt from '../motion/game/hero-art/money-block-blast.webp';
 import moneyCatchPiggyArt from '../motion/game/hero-art/money-catch-piggy.webp';
@@ -438,9 +438,8 @@ type HeroFloatCard = { id: string; src: string; focus?: string };
 /**
  * Hero display cards, by slot: 0-5 around the headline (1, 3 and 5 portrait), 6 the large
  * centerpiece above the switch. Money-making cards show popular viral templates (bundled art keeps the
- * hero look stable when template covers change); indie cards mix key art from the OpenGame
- * README hero, a 3D template and Steam store screenshots of Ori and the Will of the Wisps, Hollow
- * Knight: Silksong and Sea of Stars (rights to be confirmed before release). `focus` keeps the subject in frame.
+ * hero look stable when template covers change); viral-game cards are original key art
+ * generated for OpenDesign (no third-party game art) plus a 3D template. `focus` keeps the subject in frame.
  */
 const MONEY_HERO_CARDS: ({ id: string; focus?: string; src?: undefined } | HeroFloatCard)[] = [
   { id: 'ball-match', src: moneyBallMatchArt },
@@ -452,13 +451,13 @@ const MONEY_HERO_CARDS: ({ id: string; focus?: string; src?: undefined } | HeroF
   { id: 'snow-dash-runner', focus: '50% 40%' },
 ];
 const EPIC_HERO_CARDS: ({ id: string; focus?: string; src?: undefined } | HeroFloatCard)[] = [
-  { id: 'aaa-myth', src: aaaMythArt, focus: '50% 30%' },
-  { id: 'indie-ori', src: indieOriArt },
+  { id: 'aaa-myth', src: aaaMythArt, focus: '45% 40%' },
+  { id: 'aaa-horror', src: aaaHorrorArt },
   { id: 'daily-drift-3d' },
-  { id: 'indie-silksong', src: indieSilksongArt },
-  { id: 'aaa-adventure', src: aaaAdventureArt, focus: '35% 8%' },
-  { id: 'indie-seaofstars', src: indieSeaOfStarsArt },
-  { id: 'aaa-city', src: aaaCityArt, focus: '50% 40%' },
+  { id: 'aaa-wuxia', src: aaaWuxiaArt },
+  { id: 'aaa-fantasy', src: aaaFantasyArt, focus: '40% 45%' },
+  { id: 'aaa-spy', src: aaaSpyArt },
+  { id: 'aaa-city', src: aaaCityArt, focus: '50% 55%' },
 ];
 
 /** Hero batch for a theme: money-making templates for "money", everything else for "epic". */
@@ -1043,13 +1042,14 @@ export function ModeResourceShowcase({
     () => gameCatalog.filter(g => g.source !== 'mine' && g.status === 'published'),
     [gameCatalog],
   );
-  // The hero follows the money-making game option. While a built-in template is attached the option
-  // does not apply, so the hero keeps the theme it showed when that template was picked.
+  // The hero follows the switch itself (the money-making option), so attaching a community template
+  // never flips it. While a built-in template is attached the option does not apply, so the hero keeps
+  // the theme it showed when that template was picked.
   const lastGameThemeRef = useRef<GameHeroTheme>('money');
   const gameTheme: GameHeroTheme = !modeOptions
     ? 'money'
     : canChoosePlayableAd(modeOptions)
-      ? (isPlayableAd(modeOptions) ? 'money' : 'epic')
+      ? (modeOptions.gamePlayableAd ? 'money' : 'epic')
       : lastGameThemeRef.current;
   lastGameThemeRef.current = gameTheme;
   const heroFloatCards = useMemo(
