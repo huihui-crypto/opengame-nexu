@@ -3490,7 +3490,7 @@ export function ModeComposerTopBar({
           options.gameGenre && (
             <span className="om-sa-game-genre-chip">
               {genreHomeCovers[options.gameGenre] && <img className="om-sa-game-pill-thumb" src={genreHomeCovers[options.gameGenre]!} alt="" />}
-              <span>{t(genreLabels[options.gameGenre])}</span>
+              <span title={t(genreLabels[options.gameGenre])}>{t(genreLabels[options.gameGenre])}</span>
               <IconButton
                 variant="plain"
                 type="button"
