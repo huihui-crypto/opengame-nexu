@@ -28,12 +28,16 @@ describe('playable ads in Super Agent', () => {
     expect(isPlayableAd({ gameOrientation: 'portrait', gamePlayableAd: false })).toBe(false);
   });
 
-  it('starts new briefs as a portrait money-making mini game, but not template remixes or follow-up edits', () => {
+  it('starts new briefs and community remixes as a portrait money-making game in money mode, but not follow-up edits', () => {
     const fresh = { gameOrientation: null, gamePlayableAd: true };
     expect(isPlayableAd(fresh)).toBe(true);
     expect(effectiveGameOrientation(fresh)).toBe('portrait');
     const community = game({ source: 'community', external: { url: 'https://x.test', author: 'a', postUrl: 'https://x.test/p', model: 'm', embeddable: true } });
-    expect(isPlayableAd({ ...fresh, gameTemplate: community })).toBe(false);
+    // The Game Studio switch decides the format for community remixes too.
+    expect(isPlayableAd({ ...fresh, gameTemplate: community })).toBe(true);
+    expect(effectiveGameOrientation({ ...fresh, gameTemplate: community })).toBe('portrait');
+    expect(isPlayableAd({ ...fresh, gamePlayableAd: false, gameTemplate: community })).toBe(false);
+    expect(isPlayableAd({ ...fresh, gameTemplate: game({ source: 'template' }) })).toBe(false);
     const followUp = withoutImplicitPlayableAd({ ...DEFAULT_MODE_COMPOSER_OPTIONS, gameOrientation: null, gamePlayableAd: true });
     expect(isPlayableAd(followUp)).toBe(false);
     expect(effectiveGameOrientation(followUp)).toBeNull();

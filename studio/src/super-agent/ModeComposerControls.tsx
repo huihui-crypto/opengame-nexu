@@ -162,11 +162,13 @@ export function canChoosePlayableAd(options: Partial<Pick<ModeComposerOptions, '
 /**
  * A portrait, single-player game brief with the ad option on is built as a playable ad
  * (shown to users as a money-making mini game). New briefs start with the option on and no
- * explicit layout; that unset layout counts as portrait only when no template is attached,
- * so remixing a template keeps the template's own layout and format.
+ * explicit layout; that unset layout counts as portrait when no template or a community template
+ * is attached (the Game Studio switch decides the format), so only remixing a built-in template keeps
+ * the template's own layout and format.
  */
 export function isPlayableAd(options: Pick<ModeComposerOptions, 'gameOrientation' | 'gamePlayableAd'> & Partial<Pick<ModeComposerOptions, 'gameTemplate'>>): boolean {
-  const portrait = options.gameOrientation === 'portrait' || (options.gameOrientation === null && !options.gameTemplate);
+  const portrait = options.gameOrientation === 'portrait'
+    || (options.gameOrientation === null && (!options.gameTemplate || Boolean(options.gameTemplate.external)));
   return portrait && options.gamePlayableAd && canChoosePlayableAd(options);
 }
 

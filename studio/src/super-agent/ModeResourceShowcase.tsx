@@ -1042,14 +1042,13 @@ export function ModeResourceShowcase({
     () => gameCatalog.filter(g => g.source !== 'mine' && g.status === 'published'),
     [gameCatalog],
   );
-  // The hero follows the switch itself (the money-making option), so attaching a community template
-  // never flips it. While a built-in template is attached the option does not apply, so the hero keeps
+  // The hero follows the money-making option; a community template no longer flips it (see isPlayableAd). While a built-in template is attached the option does not apply, so the hero keeps
   // the theme it showed when that template was picked.
   const lastGameThemeRef = useRef<GameHeroTheme>('money');
   const gameTheme: GameHeroTheme = !modeOptions
     ? 'money'
     : canChoosePlayableAd(modeOptions)
-      ? (modeOptions.gamePlayableAd ? 'money' : 'epic')
+      ? (isPlayableAd(modeOptions) ? 'money' : 'epic')
       : lastGameThemeRef.current;
   lastGameThemeRef.current = gameTheme;
   const heroFloatCards = useMemo(

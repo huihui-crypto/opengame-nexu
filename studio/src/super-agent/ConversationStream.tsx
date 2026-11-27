@@ -1131,8 +1131,8 @@ export function ConversationStream({
                       // The Game Studio switch decides the format: money-making builds a portrait playable ad
                       // even from a landscape community template; the viral-game mode keeps the template's layout.
                       orientation: activeModeOptions.gameOrientation
-                        ?? (activeModeOptions.gamePlayableAd ? 'portrait' : selectedTemplate.orientation ?? 'landscape'),
-                      playableAd: activeModeOptions.gamePlayableAd && (activeModeOptions.gameOrientation ?? 'portrait') === 'portrait',
+                        ?? (isPlayableAd(activeModeOptions) ? 'portrait' : selectedTemplate.orientation ?? 'landscape'),
+                      playableAd: isPlayableAd(activeModeOptions),
                     }
                   : {
                       prompt: snapText.trim() || gameBrief,
